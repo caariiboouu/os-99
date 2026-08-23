@@ -29,6 +29,46 @@ make -j"$(nproc)" all
 # on 2026-08-20; the second is the quieter and more confusing one.
 #
 # A fresh path sidesteps both: nothing is mapped at it, so the load is real.
+# VERIFY THE SYMBOLS BEFORE INSTALLING ANYTHING.
+#
+# A plugin .so legitimately has undefined symbols -- everything it calls in the
+# compositor is resolved at dlopen -- so the linker cannot warn, and a missing
+# source file yields a .so that builds cleanly and then aborts Hyprland the
+# instant it loads:
+#
+#   Hyprland: symbol lookup error: libhyprbars-os99-*.so:
+#     undefined symbol: _Z12parseBorders...
+#
+# There is no core and no backtrace, so it reads as "the compositor crashed"
+# rather than "the build was wrong". That happened for real: upstream's Makefile
+# named three sources while its CMakeLists globbed, so ninePatch.cpp stopped
+# being compiled the moment this script switched from cmake to make.
+#
+# So: every symbol the .so needs must be provided by Hyprland, by something
+# Hyprland links, or by something we link. Strip @GLIBC_x.y version suffixes on
+# both sides or nothing matches. The three __gmon_start__ / _ITM_* entries are
+# toolchain stubs that are always unresolved and always harmless.
+echo "verifying symbols..."
+_norm() { awk '{print $NF}' | sed 's/@.*//' | sort -u; }
+_allowed() {
+  { nm -D --defined-only /usr/bin/Hyprland 2>/dev/null
+    ldd /usr/bin/Hyprland 2>/dev/null | awk '/=>/{print $3}' | xargs -r -n1 nm -D --defined-only 2>/dev/null
+    ldd hyprbars.so    2>/dev/null | awk '/=>/{print $3}' | xargs -r -n1 nm -D --defined-only 2>/dev/null
+  } | _norm
+}
+# `|| true` because this script runs under `set -e` and grep -v exits 1 when it
+# filters everything out -- which is precisely the success case here.
+MISSING=$(comm -23 <(nm -D --undefined-only hyprbars.so | _norm) <(_allowed) \
+          | grep -vE '^(__gmon_start__|_ITM_(de)?registerTMCloneTable)$' || true)
+if [[ -n $MISSING ]]; then
+  echo "!! REFUSING TO INSTALL -- $(printf '%s\n' "$MISSING" | wc -l) unresolved symbol(s):" >&2
+  printf '%s\n' "$MISSING" | head -10 | c++filt | sed 's/^/     /' >&2
+  echo "   Almost certainly a .cpp that did not get compiled. SRC in the Makefile" >&2
+  echo "   is \$(wildcard *.cpp) -- check every source actually built." >&2
+  exit 1
+fi
+echo "  all symbols resolve"
+
 HASH=$(sha256sum hyprbars.so | cut -c1-12)
 NEW="$LIBDIR/libhyprbars-os99-$HASH.so"
 
