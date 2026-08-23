@@ -2,10 +2,18 @@
 -- Expects the caller to set the global `os99_dir` to this directory.
 local D = os99_dir
 
+-- Is the plugin actually loaded? Everything that makes this theme look like a
+-- window frame comes from it, so when it is absent -- not installed yet, or
+-- disabled via the os99-no-bars kill switch -- the compositor settings that
+-- only make sense ALONGSIDE a frame must not be applied. Turning the border off
+-- with no frame to replace it leaves windows with no edge at all.
+local have_plugin = false
+pcall(function() have_plugin = hl.plugin ~= nil and hl.plugin.hyprbars ~= nil end)
+
 -- Compositor-level settings; no plugin required, so kept in their own pcall.
 pcall(function()
   hl.config({
-    general = { border_size = 0 },
+    general = { border_size = have_plugin and 0 or 1 },
     misc = { background_color = "rgb(54679B)" },
     group = { groupbar = { font_family = "Charcoal", font_size = 12 } },
     decoration = {
@@ -26,9 +34,9 @@ pcall(function()
     bar_texture = D .. "/bar",
     bar_texture_border = "0 3 0 3",
     frame_texture = D .. "/frame",
-    frame_texture_border = "35 8 8 8",
+    frame_texture_border = "28 6 6 6",
     frame_inset = "28 6 6 6",
-    frame_texture_unscaled = true,
+    frame_texture_unscaled = false,
     frame_over_window = true,
     bar_clear_color = "rgb(D5D6D5)",
     bar_text_clear_pad = 8,
@@ -55,7 +63,7 @@ end)
 -- top-right corner it has held since System 7.
 pcall(function()
   hl.plugin.hyprbars.clear_buttons()
-  local box = { bg_color = "rgb(D5D6D5)", fg_color = "rgb(000000)", size = 14, icon = "" }
+  local box = { bg_color = "rgb(D5D6D5)", fg_color = "rgb(000000)", size = 12, icon = "" }
   local function add(img, side, dispatch)
     hl.plugin.hyprbars.add_button({ bg_color = box.bg_color, fg_color = box.fg_color,
       size = box.size, icon = "", image = D .. img, side = side, dispatch = dispatch })

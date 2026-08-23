@@ -676,10 +676,18 @@ OS99_FRAME_INSET="{BAR_LOGICAL} {int(_frame["bezel"])} {int(_frame["bezel"])} {i
 -- Expects the caller to set the global `os99_dir` to this directory.
 local D = os99_dir
 
+-- Is the plugin actually loaded? Everything that makes this theme look like a
+-- window frame comes from it, so when it is absent -- not installed yet, or
+-- disabled via the os99-no-bars kill switch -- the compositor settings that
+-- only make sense ALONGSIDE a frame must not be applied. Turning the border off
+-- with no frame to replace it leaves windows with no edge at all.
+local have_plugin = false
+pcall(function() have_plugin = hl.plugin ~= nil and hl.plugin.hyprbars ~= nil end)
+
 -- Compositor-level settings; no plugin required, so kept in their own pcall.
 pcall(function()
   hl.config({{
-    general = {{ border_size = 0 }},
+    general = {{ border_size = have_plugin and 0 or 1 }},
     misc = {{ background_color = "rgb(54679B)" }},
     group = {{ groupbar = {{ font_family = "{FONT_FAMILY}", font_size = {TEXT_SIZE} }} }},
     decoration = {{
