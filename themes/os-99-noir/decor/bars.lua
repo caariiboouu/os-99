@@ -26,9 +26,9 @@ pcall(function()
     bar_texture = D .. "/bar",
     bar_texture_border = "0 3 0 3",
     frame_texture = D .. "/frame",
-    frame_texture_border = "28 6 6 6",
+    frame_texture_border = "35 8 8 8",
     frame_inset = "28 6 6 6",
-    frame_texture_unscaled = false,
+    frame_texture_unscaled = true,
     frame_over_window = true,
     bar_clear_color = "rgb(D5D6D5)",
     bar_text_clear_pad = 8,
@@ -55,12 +55,17 @@ end)
 -- top-right corner it has held since System 7.
 pcall(function()
   hl.plugin.hyprbars.clear_buttons()
-  local box = { bg_color = "rgb(D5D6D5)", fg_color = "rgb(000000)", size = 12, icon = "" }
+  local box = { bg_color = "rgb(D5D6D5)", fg_color = "rgb(000000)", size = 14, icon = "" }
   local function add(img, side, action)
     hl.plugin.hyprbars.add_button({ bg_color = box.bg_color, fg_color = box.fg_color,
       size = box.size, icon = "", image = D .. img, side = side, action = action })
   end
-  add("/bar_close.png",    "left",  "hyprctl dispatch killactive")
-  add("/bar_zoom.png",     "right", "hyprctl dispatch fullscreen 1")
-  add("/bar_collapse.png", "right", "hyprctl dispatch togglefloating")
+  -- NOTE THE SYNTAX. Hyprland 0.5x parses `hyprctl dispatch <x>` as Lua --
+  -- literally `return hl.dispatch(<x>)` -- so the old string form
+  -- "hyprctl dispatch fullscreen 1" is a Lua SYNTAX ERROR and the button
+  -- silently does nothing. Dispatchers now live under hl.dsp.*, and the
+  -- single quotes keep the shell from eating the parentheses.
+  add("/bar_close.png",    "left",  "hyprctl dispatch 'hl.dsp.window.close()'")
+  add("/bar_zoom.png",     "right", "hyprctl dispatch 'hl.dsp.window.fullscreen()'")
+  add("/bar_collapse.png", "right", "hyprctl dispatch 'hl.dsp.window.float()'")
 end)

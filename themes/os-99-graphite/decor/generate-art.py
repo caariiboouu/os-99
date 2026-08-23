@@ -734,9 +734,14 @@ pcall(function()
     hl.plugin.hyprbars.add_button({{ bg_color = box.bg_color, fg_color = box.fg_color,
       size = box.size, icon = "", image = D .. img, side = side, action = action }})
   end
-  add("/bar_close.png",    "left",  "hyprctl dispatch killactive")
-  add("/bar_zoom.png",     "right", "hyprctl dispatch fullscreen 1")
-  add("/bar_collapse.png", "right", "hyprctl dispatch togglefloating")
+  -- NOTE THE SYNTAX. Hyprland 0.5x parses `hyprctl dispatch <x>` as Lua --
+  -- literally `return hl.dispatch(<x>)` -- so the old string form
+  -- "hyprctl dispatch fullscreen 1" is a Lua SYNTAX ERROR and the button
+  -- silently does nothing. Dispatchers now live under hl.dsp.*, and the
+  -- single quotes keep the shell from eating the parentheses.
+  add("/bar_close.png",    "left",  "hyprctl dispatch 'hl.dsp.window.close()'")
+  add("/bar_zoom.png",     "right", "hyprctl dispatch 'hl.dsp.window.fullscreen()'")
+  add("/bar_collapse.png", "right", "hyprctl dispatch 'hl.dsp.window.float()'")
 end)
 """)
 
