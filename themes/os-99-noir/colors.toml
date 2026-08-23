@@ -1,0 +1,43 @@
+mode = "dark"
+
+# "Platinum Noir" -- a third Appearance: LIGHT chrome, DARK documents.
+#
+# Real Platinum put gray chrome against white paper. This keeps the chrome
+# exactly as Platinum has it -- light menu bar, light window frames, the blue
+# desktop -- and darkens only what lives INSIDE a window. Nothing about the
+# frame changes; the shell.*.toml files and decor/ are the light ones verbatim.
+#
+# mode is "dark" on purpose: it is what drives GTK and the terminal, i.e. the
+# document surface. The bar does NOT follow it, because shell.bar.toml states
+# its colours literally.
+
+
+accent    = "#8FB4E0"
+selection = "#4C6FA5"
+muted     = "#7E7E7E"
+
+background         = "#2B2B2B"
+dark_background    = "#232323"
+darker_background  = "#1B1B1B"
+lighter_background = "#4A4A4A"
+
+foreground        = "#ECECEC"
+dark_foreground   = "#9A9A9A"
+light_foreground  = "#C6C6C6"
+bright_foreground = "#FFFFFF"
+
+red     = "#F4524D"
+yellow  = "#D4AE2A"
+orange  = "#FF7A2E"
+green   = "#3FC734"
+cyan    = "#3CC3EE"
+blue    = "#6E9FE6"
+magenta = "#F45BA6"
+brown   = "#A98454"
+
+bright_red     = "#FF7B75"
+bright_yellow  = "#F5D93F"
+bright_green   = "#6BE061"
+bright_cyan    = "#7FDBF7"
+bright_blue    = "#9CC2F0"
+bright_magenta = "#FF85C0"

@@ -1,0 +1,83 @@
+#!/bin/bash
+# Regenerate the OS 9 art from ~/.config/omarchy/os99-theme.toml and apply it
+# WITHOUT going anywhere near `hyprctl reload`.
+#
+#   os99-theme-reload            re-apply the current theme's art
+#   os99-theme-reload light      switch to Os 99 Platinum  (needs omarchy theme set)
+#   os99-theme-reload dark       switch to Os 99 Graphite
+#
+# WHY THIS DOES NOT CALL `omarchy theme set` FOR ART-ONLY CHANGES:
+# `omarchy theme set` ends in omarchy-restart-hyprctl, which is literally
+# `hyprctl reload`, and reloading the config once the hyprbars fork has been
+# loaded segfaults Hyprland -- the stale dlopen handle it leaves behind is
+# enough, so unloading the plugin first does NOT make it safe. That is what
+# killed the session repeatedly on 2026-08-21; the crash reports all showed a
+# plugin with an empty name.
+#
+# So for the common case -- tweaking the toml and looking -- copy the art into
+# the live theme directory ourselves and re-apply the plugin settings through
+# `hyprctl eval`, which is what os99-window-bars already uses. No config reload,
+# no plugin unload, nothing that can take the compositor down.
+set -euo pipefail
+
+GEN="$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py"
+LIVE="$HOME/.local/state/omarchy/current/theme"
+HOOK="$HOME/.local/bin/os99-window-bars"
+
+case "${1:-}" in
+  light) SWITCH="Os 99 Platinum" ;;
+  dark)  SWITCH="Os 99 Graphite" ;;
+  "")    SWITCH="" ;;
+  *)     echo "usage: os99-theme-reload [light|dark]" >&2; exit 2 ;;
+esac
+
+[[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || \
+  export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR}/hypr" 2>/dev/null | head -1)
+
+echo "==> redrawing art"
+python3 "$GEN"
+
+CURRENT="$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo)"
+WANT_DIR=""
+case "$SWITCH" in
+  "Os 99 Platinum")      WANT_DIR="os-99-platinum" ;;
+  "Os 99 Graphite") WANT_DIR="os-99-graphite" ;;
+esac
+
+if [[ -n $WANT_DIR && $WANT_DIR != "$CURRENT" ]]; then
+  # A real theme switch has to go through omarchy, which reloads the config.
+  #
+  # This used to refuse outright: `omarchy theme set` ends in `hyprctl reload`,
+  # and reloading with the fork loaded aborted the compositor. That is FIXED --
+  # the cause was plugin code reading its own config values after they had been
+  # destroyed, throwing out of Hyprland's render and layout passes. The fork now
+  # guards every entry point during teardown (barsShuttingDown()).
+  #
+  # Verified 2026-08-21 with the display awake and rendering, which matters: it
+  # is a race with frame production and cannot reproduce while the screen is
+  # asleep. Two consecutive theme switches survived, buttons intact.
+  echo "==> switching to $SWITCH"
+  omarchy theme set "$SWITCH" >/dev/null 2>&1
+  sleep 2
+else
+  # Same theme: copy the freshly drawn art into the live copy ourselves. This is
+  # the part of `omarchy theme set` we actually need, minus the config reload.
+  SRC="$HOME/.config/omarchy/themes/${CURRENT}"
+  if [[ -d "$SRC/decor" ]]; then
+    echo "==> copying art into the live theme"
+    cp -f "$SRC/decor/"*.png "$SRC/decor/bar.env" "$LIVE/decor/" 2>/dev/null || true
+  fi
+fi
+
+echo "==> re-applying plugin settings (hyprctl eval only)"
+"$HOOK"
+sleep 1
+
+if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+  echo "==> ok"
+  for k in bar_height bar_text_size bar_padding frame_texture_border frame_inset; do
+    printf '    %-22s %s\n' "$k" "$(hyprctl getoption "plugin:hyprbars:$k" 2>/dev/null | head -1)"
+  done
+else
+  echo "!! no plugin loaded -- run $HOOK, or check ~/.config/omarchy/os99-no-bars" >&2
+fi

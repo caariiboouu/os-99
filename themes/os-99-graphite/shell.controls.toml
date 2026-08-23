@@ -1,0 +1,29 @@
+[controls]
+# Platinum controls: light gray fill, hard 1px outline, no soft edges.
+normal-color        = "#ECECEC"
+normal-fill-alpha   = 0.06
+normal-border       = "#000000"
+normal-border-width = 1
+normal-border-alpha = 0.55
+
+hover-cursor-color        = "#ECECEC"
+hover-cursor-fill-alpha   = 0.12
+hover-cursor-border       = "#000000"
+hover-cursor-border-width = 1
+hover-cursor-border-alpha = 0.75
+
+# OS 9 drew keyboard focus as a distinct heavy ring, not a hover tint.
+focus-color        = "#8FB4E0"
+focus-fill-alpha   = 0.14
+focus-border       = "#8FB4E0"
+focus-border-width = 2
+focus-border-alpha = 0.90
+
+selected-color        = "#8FB4E0"
+selected-fill-alpha   = 0.30
+selected-border       = "#000000"
+selected-border-width = 1
+selected-border-alpha = 0.55
+
+pressed-fill-alpha   = 0.28
+selection-fill-alpha = 0.40

@@ -1,0 +1,7 @@
+Marker read by ~/.config/hypr/looknfeel.lua to flatten the Hyprland look.
+
+The theme-set hook also reads it, to learn which of the toml's palettes this
+theme's chrome is drawn from. Note that Noir is "light": its chrome is Platinum
+while only the CONTENT inside windows is dark, so keying off colors.toml's
+mode would give a light-on-light button.
+palette=dark

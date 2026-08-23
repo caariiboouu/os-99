@@ -1,0 +1,57 @@
+#!/bin/bash
+# Rebuild the forked hyprbars against the running Hyprland.
+#
+# Hyprland plugins are ABI-pinned: after a Hyprland upgrade the .so stops
+# loading and the OS 9 window frames silently disappear. Re-run this, then
+# re-apply the theme.
+set -e
+SRC="$HOME/dev/hyprland-plugins-os9/hyprbars"
+LIBDIR="$HOME/.local/lib"
+PTR="$LIBDIR/libhyprbars-os99.path"      # names the .so the hook should load
+
+echo "Hyprland:      $(hyprctl version | head -1)"
+echo "pkg-config:    $(pkg-config --modversion hyprland)"
+
+cd "$SRC"
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release >/dev/null
+cmake --build build -j"$(nproc)"
+
+# CRITICAL: every build gets its own filename, keyed by content hash.
+#
+# Reusing one path does not work, and fails in two different ways. Overwriting
+# in place (cp) rewrites the same inode while Hyprland may still have those
+# pages mapped -- dlsym then reads a file that changed underneath it and aborts
+# the compositor. Replacing by rename avoids that, but Hyprland does not fully
+# dlclose an unloaded plugin, so dlopen on a path it has seen before hands back
+# the STALE handle and silently keeps running the old code. Both were observed
+# on 2026-08-20; the second is the quieter and more confusing one.
+#
+# A fresh path sidesteps both: nothing is mapped at it, so the load is real.
+HASH=$(sha256sum build/libhyprbars.so | cut -c1-12)
+NEW="$LIBDIR/libhyprbars-os99-$HASH.so"
+
+mkdir -p "$LIBDIR"
+
+# Unload whatever is live BEFORE repointing, while we still know its path.
+if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+  OLD=$(cat "$PTR" 2>/dev/null || echo "$LIBDIR/libhyprbars-os99.so")
+  echo "unloading currently-loaded plugin: $OLD"
+  hyprctl plugin unload "$OLD" >/dev/null 2>&1 || true
+  sleep 1
+fi
+
+install -m755 build/libhyprbars.so "$NEW.tmp"
+mv -f "$NEW.tmp" "$NEW"
+echo "$NEW" > "$PTR"
+
+# NEVER delete an old build. That claim -- "safe to remove, the inode stays
+# alive" -- is what took the session down a second time on 2026-08-20 with a
+# SIGBUS whose top frame was literally
+#   /home/j/.local/lib/libhyprbars-os99.so (deleted)
+# Hyprland does not fully dlclose a plugin, so its mapping of every .so it has
+# ever loaded is still live, and unlinking (or overwriting) the backing file
+# makes any not-yet-faulted page unreadable. These are ~470K each; leaving them
+# is free. Sweep them by hand when no Hyprland that loaded them is running.
+
+echo "installed -> $NEW"
+echo "Now: omarchy theme set \"$(omarchy theme current)\""

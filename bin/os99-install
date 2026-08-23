@@ -1,0 +1,216 @@
+#!/bin/bash
+# Set the OS 9 theme up on THIS machine.
+#
+#   os99-install            detect, fix what is safe to fix, report the rest
+#   os99-install --check    report only, change nothing
+#
+# The theme is not one artefact. It is art baked at this display's scale, a
+# forked hyprbars plugin, two theme-set hooks, a config file and a shell plugin,
+# and only some of those can be carried in a git repo. This script does the part
+# that has to happen per machine, and tells you plainly what it cannot do.
+#
+# It is safe to re-run. Run it again after changing monitors -- that is the whole
+# point of it, because the art is authored at DEVICE resolution and blitted 1:1,
+# so a display at a different scale does not merely look a bit off, it renders
+# the entire window frame at the wrong size.
+set -uo pipefail
+
+CHECK=false
+[[ ${1:-} == --check ]] && CHECK=true
+
+TOML="$HOME/.config/omarchy/os99-theme.toml"
+GEN="$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py"
+HOOKS="$HOME/.config/omarchy/hooks/theme-set.d"
+LOOKNFEEL="$HOME/.config/hypr/looknfeel.lua"
+
+ok=0; warn=0; fail=0
+say()  { printf '  %s\n' "$*"; }
+good() { printf '  \033[32mok\033[0m    %s\n' "$*"; ok=$((ok+1)); }
+note() { printf '  \033[33mnote\033[0m  %s\n' "$*"; warn=$((warn+1)); }
+bad()  { printf '  \033[31mmiss\033[0m  %s\n' "$*"; fail=$((fail+1)); }
+head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+[[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || \
+  export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr" 2>/dev/null | head -1)
+
+# --------------------------------------------------------------------- 1. deps
+head_ "Prerequisites"
+for c in python3 hyprctl fc-list; do
+  if command -v "$c" >/dev/null; then good "$c"; else bad "$c not found"; fi
+done
+# The generator is deliberately stdlib-only -- no PIL, no fonttools -- so that
+# installing the theme never means installing a Python toolchain.
+if python3 -c 'import tomllib, zlib, struct, fractions' 2>/dev/null; then
+  good "python3 stdlib (tomllib, zlib) -- the generator needs nothing else"
+else
+  bad "python3 >= 3.11 required (tomllib)"
+fi
+[[ -f $TOML ]] && good "config $TOML" || bad "config missing: $TOML"
+[[ -f $GEN  ]] && good "generator present" || bad "generator missing: $GEN"
+
+# -------------------------------------------------------------------- 2. scale
+head_ "Display scale"
+DETECTED=$(hyprctl monitors -j 2>/dev/null | python3 -c '
+import json,sys
+try: mons=json.load(sys.stdin)
+except Exception: sys.exit(1)
+if not mons: sys.exit(1)
+f=next((m for m in mons if m.get("focused")), mons[0])
+scales={round(float(m.get("scale",1)),6) for m in mons}
+print(round(float(f.get("scale",1)),6), f.get("name","?"), len(scales))
+' 2>/dev/null)
+if [[ -z $DETECTED ]]; then
+  note "could not ask the compositor; leaving the configured scale alone"
+else
+  read -r DSCALE DNAME DNSCALES <<<"$DETECTED"
+  CONFIGURED=$(python3 -c '
+import tomllib,sys
+c=tomllib.load(open(sys.argv[1],"rb")).get("display",{}).get("scale","auto")
+print(c)' "$TOML" 2>/dev/null)
+  say "compositor reports $DSCALE on $DNAME; config says $CONFIGURED"
+  if (( DNSCALES > 1 )); then
+    # One set of art, one scale. There is no per-monitor art in this design.
+    note "monitors run at DIFFERENT scales -- the art can only match one of them."
+    note "     The frame will be the wrong size on the others. Set them equal, or"
+    note "     pick which monitor to be correct on by pinning scale in the toml."
+  fi
+  if [[ $CONFIGURED == auto ]]; then
+    good "scale = \"auto\" -- follows the display, nothing to do"
+  elif [[ $CONFIGURED == "$DSCALE" ]]; then
+    good "configured scale matches the display"
+  else
+    bad "configured scale $CONFIGURED does not match the display $DSCALE"
+    if ! $CHECK; then
+      say "      -> setting scale = \"auto\" so it tracks the display from now on"
+      sed -i 's/^scale = .*/scale = "auto"/' "$TOML" && good "toml updated"
+    fi
+  fi
+fi
+
+# -------------------------------------------------------------------- 3. fonts
+head_ "Fonts"
+FAMS=$(fc-list : family 2>/dev/null | tr ',' '\n' | sed 's/^ *//;s/ *$//' | sort -u)
+have() { grep -qxF "$1" <<<"$FAMS"; }
+if have Charcoal; then
+  good "Charcoal -- the real OS 9 system font"
+elif have ChicagoFLF; then
+  # Measured at the bar's device size: identical ascent, identical baseline,
+  # identical descender depth, 7% wider. Nothing in the layout has to move.
+  good "ChicagoFLF (public domain) -- a metric drop-in for Charcoal"
+elif have "Chicago Kare"; then
+  # Drawn on a smaller em, so it renders about a fifth small at the same nominal
+  # size. The generator compensates with a 1.25x size bump.
+  note "Chicago Kare (MIT) -- usable, but drawn small; sizes are scaled 1.25x"
+else
+  bad "none of Charcoal / ChicagoFLF / Chicago Kare installed"
+  say "      -> yay -S ttf-chicagoflf        # public domain, closest match"
+  say "         yay -S ttf-chicago-kare      # MIT alternative"
+  say "      Charcoal is Apple's and is deliberately not redistributed here."
+fi
+
+# ----------------------------------------------------------------- 4. geometry
+head_ "Art"
+if $CHECK; then
+  say "(--check) skipping regeneration"
+else
+  if python3 "$GEN" > /tmp/os99-gen.$$ 2>&1; then
+    grep -E "^  (scale|font|bar height|ridge|hatch rows|bezel)" /tmp/os99-gen.$$ | sed 's/^  /  /'
+    if grep -q "MISALIGNED\|<-- " /tmp/os99-gen.$$; then
+      note "the generator flagged something above -- read it before shipping"
+    else
+      good "art regenerated, hatch and buttons aligned"
+    fi
+  else
+    bad "generator failed:"; sed 's/^/      /' /tmp/os99-gen.$$
+  fi
+  rm -f /tmp/os99-gen.$$
+fi
+
+# -------------------------------------------------------------------- 5. hooks
+head_ "Hooks"
+for h in os99-bars-hook.sh os99-gtk.sh; do
+  if [[ -f $HOOKS/$h ]]; then good "theme-set.d/$h"
+  else bad "theme-set.d/$h missing  ->  omarchy hook install theme-set <path>/$h"; fi
+done
+
+# ------------------------------------------------------------- 5b. shell plugin
+head_ "Shell plugin (menu-bar font)"
+# The OS 9 menu bar font comes from a Quickshell bar widget that renders nothing
+# and only sets Style.fontFamily. Two separate things are needed: the plugin
+# directory, and an entry in shell.json's bar layout. The theme can carry the
+# first but not the second -- shell.json is the user's file.
+PLUGDIR="$HOME/.config/omarchy/plugins/j.os99-font"
+SHELLJSON="$HOME/.config/omarchy/shell.json"
+if [[ -d $PLUGDIR ]]; then good "plugin directory present"; else bad "missing $PLUGDIR"; fi
+
+if [[ ! -f $SHELLJSON ]]; then
+  note "no shell.json; the menu bar will use the stock font"
+elif python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+lay=d.get('bar',{}).get('layout',{})
+sys.exit(0 if any(w.get('id')=='j.os99-font' for sec in lay.values() for w in sec) else 1)
+" "$SHELLJSON" 2>/dev/null; then
+  good "registered in shell.json bar layout"
+elif $CHECK; then
+  bad "not registered in shell.json (--check: not modifying)"
+else
+  # ALWAYS back up first. A previous session emptied this file and took seven
+  # widgets with it; the layout is not reconstructible from anything else.
+  cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"
+  if python3 - "$SHELLJSON" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+lay = d.setdefault("bar", {}).setdefault("layout", {})
+sec = lay.setdefault("right", [])
+# Front of the right section: it draws nothing, so position is cosmetic, but
+# keeping it first means it is not mistaken for a missing indicator later.
+sec.insert(0, {"id": "j.os99-font"})
+# Match the file's own formatting exactly -- one-space indent, sorted keys, and
+# NO trailing newline -- so this shows up as a one-line diff rather than a
+# rewrite of the whole file.
+with open(path, "w") as fh:
+    json.dump(d, fh, indent=1, sort_keys=True)
+PYEOF
+  then good "added j.os99-font to shell.json (backup written)"
+  else bad "could not edit shell.json -- add {\"id\": \"j.os99-font\"} to bar.layout yourself"; fi
+fi
+
+# ------------------------------------------------------------------- 6. plugin
+head_ "hyprbars fork"
+# This is the piece a theme repo genuinely cannot carry: it is a compiled .so,
+# and it must be built against the running Hyprland's headers. hyprpm is the
+# supported way -- it clones Hyprland's own sources at your version and builds.
+if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+  good "loaded"
+elif [[ -r $HOME/.local/lib/libhyprbars-os99.path ]]; then
+  note "built but not loaded -- run os99-window-bars"
+else
+  bad "not installed. On another machine this is the step that needs doing:"
+  say "      hyprpm add https://github.com/<you>/hyprland-plugins-os9"
+  say "      hyprpm enable hyprbars-os9 && hyprpm reload -n"
+fi
+
+# ---------------------------------------------------------------- 7. looknfeel
+head_ "Hyprland look-and-feel"
+# A theme's own hyprland.lua is loaded BEFORE the user's looknfeel.lua, so the
+# user's file wins on rounding and blur. Rounded corners and a nine-patch frame
+# are mutually exclusive, so this has to be right or the corners get clipped.
+if [[ -f $LOOKNFEEL ]] && grep -q "os99.marker" "$LOOKNFEEL"; then
+  good "looknfeel.lua branches on os99.marker (rounding/blur off for OS 9)"
+else
+  bad "looknfeel.lua does not branch on os99.marker"
+  say "      Rounded corners will clip the frame. Until the plugin forces this"
+  say "      itself, looknfeel.lua needs: if theme_ships(\"os99.marker\") then"
+  say "      rounding = 0, blur disabled."
+fi
+
+head_ "Summary"
+printf '  %d ok, %d note, %d missing\n' "$ok" "$warn" "$fail"
+if (( fail == 0 )); then
+  say "Ready. Apply with:  omarchy theme set \"Os 99 Platinum\""
+else
+  say "Work through the 'miss' lines above, then re-run os99-install."
+fi
+exit 0

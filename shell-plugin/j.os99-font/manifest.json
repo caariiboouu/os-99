@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "j.os99-font",
+  "name": "OS 9 shell font",
+  "version": "1.0.0",
+  "author": "j",
+  "description": "Puts the shell chrome into Charcoal while an OS 9 theme is active. Renders nothing.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "OS 9 shell font",
+    "description": "Invisible; sets Style.fontFamily",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

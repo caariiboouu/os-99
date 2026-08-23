@@ -1,0 +1,154 @@
+# OS 9 Platinum theme tunables.
+#
+#   Edit this file, then run:  os9-theme-reload
+#
+# Geometry is shared by both schemes so light and dark stay identical in shape;
+# only the colours differ. Every value here is in unscaled pixels.
+#
+# The bar height is DERIVED from its parts rather than set directly, because the
+# plugin reserves bar_height and slices the art at the same number -- if those
+# two ever disagree the pinstripes stretch and lose their period. Change the
+# margins or the ridge count and the height follows; os9-theme-reload prints
+# what it worked out.
+
+[display]
+# Art is authored at DEVICE resolution and blitted 1:1, so the compositor never
+# resamples it. That is what removes the moire in the hatch: at a fractional
+# scale, upscaling a fine pattern makes some ridges a pixel thicker than others.
+# Set this to your monitor's scale (hyprctl monitors | grep scale).
+scale = "auto"   # follow the display; pin a number only to override
+
+[bar]
+# A "ridge" is one light line plus one dark line -- one groove of the hatch.
+# Classic OS 9 shows six of them. They do not fill the bar: there is plain face
+# above and below, and the plugin clears a plain patch behind the title text and
+# behind each button so the hatch stops there too.
+ridges        = 6
+# Real OS 9, measured off a screenshot: 6 ridges of period 2 (one light line,
+# one dark) in a ~20px bar, hatch occupying rows 4-15. The top margin is about
+# HALF the bottom one -- the hatch sits high in the bar, it is not centred.
+# These are LOGICAL pixels; the generator multiplies by display.scale.
+ridge_hi      = 1.6   # logical; x display.scale gives the DEVICE thickness     # thickness of a ridge's LIGHT line
+ridge_lo      = 0.8   # 1.6 + 0.8 = 2.4 logical -> 3 device px per ridge at 1.25     # thickness of a ridge's DARK line
+ridge_gap     = 0     # extra plain rows BETWEEN ridges (0 = continuous hatch)
+margin_top    = 3.2     # plain rows above the hatch  (kept ~half of margin_bottom)
+margin_bottom = 6.4     # plain rows below the hatch
+
+# UNIFORMITY ON A SCALED DISPLAY. One ridge is (ridge_hi + ridge_lo) rows, and
+# that PERIOD gets multiplied by the monitor scale. At scale 1.25 = 5/4 the
+# period must be a multiple of 4 or the ridges cannot tile evenly -- a period of
+# 3 came out 4,4,3,4,4,4 physical pixels and looked visibly irregular. Period 4
+# lands on exactly 5 physical rows every time. At scale 1.5 = 3/2 use an even
+# period; at scale 1 anything works. os9-theme-reload prints the period so you
+# can check it against your scale.
+
+# The clear patches behind the title and the boxes must not eat the bar's own
+# top rule + highlight or its bottom shadow -- those belong to the frame bezel,
+# not to the hatch. These inset the patches vertically. Top 2 skips the rule and
+# the highlight; bottom 1 skips the shadow.
+# The colour the clear patches behind the title and boxes are painted with.
+# It is the palette's own face, so it follows a light<->dark switch instead of
+# being pinned to one scheme. Leave it unset unless you have a reason.
+#
+# It was briefly hardcoded here to compensate for the art seeming to render
+# ~3% dark. That was a MEASUREMENT ARTIFACT: the live theme copy was stale and
+# still held art from an older face value. Both palettes render their face
+# exactly (213 and 74), and the value does not depend on the desktop colour --
+# verified against red, green and blue backgrounds. If a seam ever reappears,
+# check that the live copy is current before reaching for a fudge factor.
+# clear_color = "D5D6D5"
+
+clear_inset_top    = 2
+clear_inset_bottom = 1
+
+[frame]
+bezel  = 6            # side and bottom border thickness
+# A classic Mac drop shadow falls to the BOTTOM-RIGHT only, hard-edged, and it
+# does not start at the corners: the right strip begins a few pixels BELOW the
+# top edge and the bottom strip a few pixels RIGHT of the left edge, as though
+# the window were lifted off the desktop.
+#
+# These are the two extents, in logical px, and they are independent -- the
+# right edge can be lighter than the bottom, which is how a real one looks.
+#
+# The INSET is not a separate knob and cannot be. Hyprland's shadow is the
+# window box grown by `range` then shifted by `offset`, so inset = offset-range
+# and extent = offset+range; inset can never exceed extent. The generator pins
+# range to 0, which maximises the inset (inset == extent) and gives the pure
+# offset-copy shadow the classic look actually wants. So the right strip starts
+# shadow_bottom px below the top-right corner, and the bottom strip starts
+# shadow_right px right of the bottom-left corner. Raise these to clip further
+# in; you cannot clip in further without also getting a deeper shadow.
+shadow_right  = 2      # extends past the right edge  (lighter than the bottom)
+shadow_bottom = 3      # extends past the bottom edge
+
+# An unfocused window sits closer to the desktop, so its shadow is lighter.
+# Percentages of black. Hyprland's shadow:color_inactive defaults to the
+# sentinel ffffffff, which just means "reuse shadow:color" -- so without setting
+# it explicitly every window casts the same shadow regardless of focus.
+shadow_opacity          = 60
+shadow_opacity_inactive = 22
+
+[buttons]
+size      = 14        # box is size x size; matches the hatch field height
+edge_pad  = 1         # gap from the window edge to the first box.
+                      # Real OS 9 lines the box's OUTER edge up with the
+                      # content area edge below it, within a pixel.
+gap       = 4         # gap between boxes on the same side
+clear_pad = 7         # plain face padding around each box, clearing the hatch
+
+[text]
+size      = 12        # title point size
+font      = "Charcoal"   # OS 9 shipped Charcoal; Chicago was System 7
+clear_pad = 8        # plain face padding either side of the title, clearing the hatch
+
+# ---------------------------------------------------------------------------
+# Colours. The light scheme is taken from real Platinum artwork (grassmunk/
+# Platinum9's xfwm4 XPMs); dark mirrors its spacing rather than inventing one.
+#
+#   face      the chrome body
+#   lit       highlight -- the edge facing the top-left light source
+#   shadow    the edge facing away
+#   deep      darkest structural tone, used for the dish under the boxes
+#   stripe_hi / stripe_lo   the two lines of one ridge
+#   outline   button borders (a dark GREY in real Platinum, never black)
+#   rule      the window's outer 1px rule
+#   well_lo / well_hi   the button's 45-degree interior gradient, corner to corner
+#   pressed   button face while held
+# ---------------------------------------------------------------------------
+
+[light]
+face      = "D5D6D5"
+dish      = "8C8C8C"   # the recess each box sits in (platinum.css uses #8c8c8c)
+lit       = "FFFFFF"
+shadow    = "A9A9A9"
+deep      = "8A8A8A"
+stripe_hi = "FFFFFF"
+stripe_lo = "737373"
+outline   = "2D2D2D"
+rule      = "000000"
+well_lo   = "A9A9A9"
+well_hi   = "FFFFFF"
+pressed   = "BBBBBB"
+text      = "000000"
+
+[dark]
+# "Graphite". No OS 9 ground truth exists for a dark Appearance, so rather than
+# invent one this mirrors the LIGHT palette's spacing exactly:
+#   lit +42, shadow -44, deep -61, stripe_hi +42, stripe_lo -75, pressed -26
+# The old face of 4A4A4A was too dark for that to fit -- 74 - 75 goes negative,
+# so shadow and the stripes had to be hand-tuned and the bevel lost contrast.
+# 5F5F5F is the first face where the whole ramp lands without clamping.
+face      = "5F5F5F"
+lit       = "898989"
+shadow    = "333333"
+deep      = "222222"
+stripe_hi = "898989"
+stripe_lo = "141414"
+outline   = "141414"
+rule      = "000000"
+well_lo   = "333333"
+well_hi   = "898989"
+pressed   = "454545"
+dish      = "161616"
+text      = "F0F0F0"

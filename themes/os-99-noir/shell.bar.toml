@@ -1,0 +1,9 @@
+[bar]
+# The OS 9 menu bar: flat Platinum gray, black text, no translucency.
+background       = "#DDDDDD"
+background-alpha = 1.0
+text             = "#000000"
+active           = "#DD0806"
+scale-with-font  = true
+size-horizontal  = 26
+size-vertical    = 30

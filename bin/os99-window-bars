@@ -1,0 +1,243 @@
+#!/bin/bash
+# Load and configure hyprbars while an OS 9 theme is active; unload otherwise.
+#
+# This lives in a hook rather than the theme's hyprland.lua because that file
+# only executes at Hyprland startup -- not on `hyprctl reload` and not on theme
+# switch. hyprctl keyword is also unavailable under Omarchy's Lua config parser,
+# so configuration goes through `hyprctl eval`.
+# Local fork of hyprbars with nine-patch texture support (upstream only
+# fills the bar with a solid rect, which cannot do pinstripes).
+#
+# The build is installed under a content-hashed filename and os99-hyprbars-rebuild
+# records the current one here. Fixed paths cannot be reused: Hyprland does not
+# fully dlclose a plugin, so dlopen on a previously-seen path returns the stale
+# handle and keeps running the old code.
+PTR="$HOME/.local/lib/libhyprbars-os99.path"
+SO=$(cat "$PTR" 2>/dev/null || echo "$HOME/.local/lib/libhyprbars-os99.so")
+STOCK=/usr/lib/libhyprbars.so
+
+# ---------------------------------------------------------------------------
+# WHERE THINGS LIVE. Detected, not configured.
+#
+# The frame itself is pure Hyprland -- the plugin has never heard of Omarchy and
+# neither has the art generator. What Omarchy contributes is somewhere to PUT
+# the art (inside the active theme, so it follows theme switches) and hooks to
+# run this script from. Without Omarchy there is no theme system to ride along
+# with, so the art lives in one fixed directory and the palette is named beside
+# it. Everything downstream of here is identical in both cases.
+#
+#   OS99_DIR      point the art anywhere you like; wins over both.
+#   OS99_PALETTE  light|dark, standalone only (Omarchy reads it from the marker).
+OMARCHY_THEME="$HOME/.local/state/omarchy/current/theme"
+STANDALONE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/os99"
+
+HAVE_OMARCHY=0
+[[ -d "$HOME/.local/state/omarchy/current" ]] && HAVE_OMARCHY=1
+
+if [[ -n ${OS99_DIR:-} ]]; then
+  LAYOUT=explicit;   THEME_DIR="$OS99_DIR"
+elif [[ -f "$OMARCHY_THEME/os99.marker" ]]; then
+  LAYOUT=omarchy;    THEME_DIR="$OMARCHY_THEME"
+else
+  LAYOUT=standalone; THEME_DIR="$STANDALONE_DIR"
+fi
+
+# The generated config snippet. Under Omarchy it belongs with the rest of the
+# Omarchy config; standalone it goes next to hyprland.conf, where the user is
+# expected to source it themselves.
+if [[ $LAYOUT == omarchy ]]; then
+  LUAFILE="$HOME/.config/omarchy/os99-bars.lua"
+else
+  LUAFILE="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/os99-bars.lua"
+fi
+
+command -v hyprctl >/dev/null 2>&1 || exit 0
+
+# Kill switch, checked in both layouts -- useful if the plugin ever starts
+# taking the session down at boot.
+for k in "$HOME/.config/omarchy/os99-no-bars" "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/os99-no-bars"; do
+  [[ -f $k ]] && exit 0
+done
+[[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR}/hypr" 2>/dev/null | head -1)
+
+# Switching AWAY from an OS 99 theme has to hand the frame back to the defaults.
+# That is an Omarchy-only concern: standalone there is nothing to switch to, and
+# a missing art directory just means "not installed" -- in which case leave the
+# compositor entirely alone rather than imposing someone else's border colours.
+if (( HAVE_OMARCHY )) && [[ $LAYOUT != explicit && ! -f "$OMARCHY_THEME/os99.marker" ]]; then
+  hyprctl plugin list 2>/dev/null | grep -q hyprbars && { hyprctl plugin unload "$SO" >/dev/null 2>&1; hyprctl plugin unload "$STOCK" >/dev/null 2>&1; }
+  hyprctl eval 'hl.config({
+    general = { border_size = 2, col = {
+      active_border = { colors = { "rgba(33ccffee)", "rgba(00ff99ee)" }, angle = 45 },
+      inactive_border = "rgba(595959aa)" } },
+    decoration = { shadow = { enabled = false } },
+  })' >/dev/null 2>&1
+  exit 0
+fi
+
+# Nothing to draw with. Standalone this is the normal "not set up yet" state.
+if [[ ! -d "$THEME_DIR/decor" ]]; then
+  echo "os99-window-bars: no art at $THEME_DIR/decor" >&2
+  echo "  run: generate-art.py --out \"$THEME_DIR/decor\" --palette light" >&2
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# THE ART HAS TO MATCH THIS DISPLAY.
+#
+# A theme repo ships PNGs baked at whatever scale its author's monitor ran at,
+# and the plugin blits them 1:1 (frame_texture_unscaled) precisely so the
+# compositor never resamples the pinstripes. The cost of that is that art from
+# someone else's machine is not slightly off, it is the WRONG SIZE -- a frame
+# drawn for scale 1.25 renders at 80% on a 1.0 display.
+#
+# So compare the scale stamped into bar.env against the live display and redraw
+# when they disagree. This is what makes `omarchy theme install` sufficient: the
+# hook runs on every theme-set, including the one theme-install ends with, so a
+# stranger's first apply already regenerates for their monitor. About 110ms.
+#
+# It is self-limiting: the shipped configs say scale = "auto", so after a redraw
+# the stamp equals the display and the next run does nothing.
+regen_art_if_stale() {
+  local gen="$THEME_DIR/decor/generate-art.py"
+  local env_file="$THEME_DIR/decor/bar.env"
+  [[ -f $gen ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  # What scale will the generator ACTUALLY use? Not necessarily the display's.
+  # The user's ~/.config/omarchy/os99-theme.toml outranks the copy shipped inside
+  # the theme, and either may PIN a number rather than say "auto". A pin is a
+  # deliberate override, so comparing the stamp against the DISPLAY there would
+  # mean regenerating byte-identical art on every single run and still never
+  # matching. Ask what the generator will produce, and compare against that.
+  local want
+  want=$(python3 - "$THEME_DIR" <<'PY' 2>/dev/null
+import tomllib, os, sys, json, subprocess
+theme = sys.argv[1]
+cfg = None
+for p in (os.environ.get("OS99_CONFIG"),
+          os.path.expanduser("~/.config/omarchy/os99-theme.toml"),
+          os.path.expanduser("~/.config/os99/os99-theme.toml"),
+          os.path.expanduser("~/.config/hypr/os99-theme.toml"),
+          os.path.join(theme, "decor", "os99-theme.toml")):
+    if p and os.path.isfile(p):
+        cfg = tomllib.load(open(p, "rb")); break
+if cfg is None:
+    raise SystemExit
+s = cfg.get("display", {}).get("scale", "auto")
+if isinstance(s, str) and s.strip().lower() == "auto":
+    try:
+        mons = json.loads(subprocess.run(["hyprctl", "monitors", "-j"],
+                          capture_output=True, text=True, timeout=5, check=True).stdout)
+        f = next((m for m in mons if m.get("focused")), mons[0])
+        s = float(f.get("scale", 1))
+    except Exception:
+        raise SystemExit
+print(round(float(s), 6))
+PY
+)
+  [[ -n $want ]] || return 0
+
+  local have=""
+  [[ -r $env_file ]] && have=$(sed -n 's/^OS99_ART_SCALE=//p' "$env_file" | tail -1)
+
+  # Equal as NUMBERS, not as strings: "1.25" and "1.250000" are the same scale.
+  if [[ -n $have ]] && python3 -c "import sys; sys.exit(0 if abs(float(sys.argv[1])-float(sys.argv[2]))<1e-6 else 1)" "$have" "$want" 2>/dev/null; then
+    return 0
+  fi
+
+  # Which palette this theme's CHROME uses. Not colors.toml's mode: noir is
+  # mode=dark with light chrome, and keying off mode gives a light-on-light box.
+  local pal
+  # Omarchy names the palette in the theme's marker file, because a theme knows
+  # which of the two it is. Standalone there is no theme, so take it from the
+  # environment or a one-line file beside the art, and fall back to light.
+  pal=$(sed -n 's/^palette=//p' "$THEME_DIR/os99.marker" 2>/dev/null | tail -1)
+  [[ -n $pal ]] || pal="${OS99_PALETTE:-}"
+  [[ -n $pal ]] || pal=$(tr -d '[:space:]' <"$THEME_DIR/palette" 2>/dev/null)
+  [[ $pal == light || $pal == dark ]] || pal=light
+
+  python3 "$gen" --out "$THEME_DIR/decor" --palette "$pal" --quiet 2>/dev/null || return 0
+}
+regen_art_if_stale
+
+# Geometry and colours come from the generated bar.env, which generate-art.py
+# writes from ~/.config/omarchy/os99-theme.toml. Hardcoding them here is how the
+# hook and the art drift apart -- bar_height MUST equal the art's top border.
+if [[ -r "$THEME_DIR/decor/bar.env" ]]; then
+  # shellcheck disable=SC1091
+  source "$THEME_DIR/decor/bar.env"
+else
+  OS99_BAR_HEIGHT=36; OS99_BEZEL=8; OS99_BOX_SIZE=20
+  OS99_BTN_EDGE_PAD=8; OS99_BTN_GAP=6; OS99_BTN_CLEAR_PAD=5
+  OS99_CLEAR_INSET_TOP=2; OS99_CLEAR_INSET_BOTTOM=1
+  OS99_TEXT_SIZE=16; OS99_TEXT_FONT="ChicagoFLF"; OS99_TEXT_CLEAR_PAD=12
+  OS99_SHADOW_RANGE=0; OS99_SHADOW_OFFSET_X=2; OS99_SHADOW_OFFSET_Y=3
+  OS99_SHADOW_COLOR="rgba(00000099)"; OS99_SHADOW_COLOR_INACTIVE="rgba(00000038)"
+  OS99_FRAME_BORDER="35 8 8 8"; OS99_FRAME_INSET="28 6 6 6"; OS99_FRAME_UNSCALED=true
+  OS99_FACE="rgb(D5D6D5)"; OS99_TEXT_COLOR="rgb(000000)"
+fi
+
+BAR="$OS99_FACE"; TXT="$OS99_TEXT_COLOR"
+# Older builds of the fork do not know this key, and an unknown key fails the
+# whole eval, so only send it when the art actually needs it.
+OS99_UNSCALED_LINE=""
+OS99_OVER_LINE=""
+[[ ${OS99_FRAME_OVER:-false} == true ]] && OS99_OVER_LINE="frame_over_window = true,"
+[[ ${OS99_FRAME_UNSCALED:-false} == true ]] && OS99_UNSCALED_LINE="frame_texture_unscaled = true,"
+# Derive from the TITLE colour, not from `mode`. In the "noir" Appearance mode
+# is "dark" (it drives GTK and the terminal, i.e. the document surface) while the
+# chrome is light -- keying off mode there would give a light-on-light button.
+BTN="$OS99_TEXT_COLOR"
+
+fresh=0
+if ! hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+  hyprctl plugin load "$SO" >/dev/null 2>&1
+  fresh=1
+  sleep 0.4
+fi
+
+# ---------------------------------------------------------------------------
+# WHY THE SETTINGS ARE WRITTEN TO A FILE AND NOT JUST EVAL'D.
+#
+# `hyprctl eval` sets values at RUNTIME. Hyprland throws all of those away on a
+# config reload and rebuilds from the config files -- and it auto-reloads
+# whenever you save anything under ~/.config/hypr. So editing monitors.lua, or
+# any other hypr file, silently stripped the whole theme: bar_height fell back
+# to 15, frame_texture went empty, and the window frame reverted to a plain
+# title bar. The buttons went too, because hyprbars clears its button list in
+# onPreConfigReload.
+#
+# An earlier comment in this file claimed the theme's hyprland.lua "only
+# executes at Hyprland startup -- not on hyprctl reload". That is WRONG, and
+# measuring it is what fixed this: after a reload the theme's own values (its
+# border_size = 1, its shadow.enabled = false) were back, while everything
+# eval'd was gone. Omarchy pulls the theme in via
+# require_optional.module("omarchy.current.theme.hyprland"), so it is part of
+# the config chain and re-runs every time.
+#
+# So: write the settings to a lua file, have each OS 9 theme's hyprland.lua
+# dofile it, and apply it now by dofile'ing the same file. One source of truth,
+# and a reload re-applies it instead of destroying it.
+#
+# Every section is pcall'd. On a cold start the config is parsed BEFORE this
+# hook has loaded the plugin, so plugin:hyprbars:* keys do not exist yet and
+# hl.config would raise on an unknown key -- taking the rest of the user's
+# config down with it. Failing quietly is correct: the hook applies them a
+# moment later anyway.
+# Apply the theme's own bars.lua -- the same file the theme's hyprland.lua
+# sources on every config load. generate-art.py writes it, so runtime and reload
+# are reading identical settings and cannot drift apart.
+#
+# This used to build a second copy of the config here, in shell. That was the
+# duplication that caused the title bar to sit in the PREVIOUS theme's colours
+# after a switch: the copy under ~/.config/omarchy was only refreshed when this
+# hook ran, and omarchy-theme-set does not call the hook until every command in
+# its parallel batch has finished -- including omarchy-theme-set-tmux, which
+# takes ~19s with a lot of saved sessions.
+BARSLUA="$THEME_DIR/decor/bars.lua"
+if [[ -r $BARSLUA ]]; then
+  hyprctl eval "os99_dir = '$THEME_DIR/decor'; dofile('$BARSLUA')" >/dev/null 2>&1
+else
+  echo "os99-window-bars: $BARSLUA missing -- run generate-art.py --out \"$THEME_DIR/decor\"" >&2
+fi

@@ -1,0 +1,50 @@
+mode = "light"
+
+# Mac OS 9 "Platinum". Chrome grays are the Appearance Manager's; the ANSI
+# ramp is the Macintosh 16-color system palette, darkened where a vivid
+# original would be illegible on a white document background.
+#
+# CONTRAST. The original ramp failed badly on light surfaces -- bright_yellow
+# #C89600 measured 2.69:1 on white and 1.98:1 on the #DDDDDD chrome, i.e. barely
+# legible, and every "bright" entry was in the same state. The ramp is now fitted
+# to WCAG 2.1 by darkening in HSL, so hue is preserved and these still read as
+# the Macintosh palette:
+#
+#   normals  >= 7.0:1 on white (AAA) -- matching green/blue/brown, which the
+#            original already placed there, so this is the palette's own intent
+#   brights  >= 4.5:1 on white (AA) and >= 3.0:1 on #DDDDDD
+#
+# The two tiers matter: fitting both to the same target collapsed each bright
+# onto its normal (bright_cyan #007FAF vs cyan #0D80A7 were indistinguishable).
+# Splitting them keeps a ~2.5 gap in contrast ratio, so the pairs stay apart.
+# Re-check with scratchpad/contrast.py after any edit.
+
+accent    = "#356497"
+selection = "#AABEDC"
+muted     = "#767676"
+
+background         = "#FFFFFF"
+dark_background    = "#DDDDDD"
+darker_background  = "#BBBBBB"
+lighter_background = "#EEEEEE"
+
+foreground        = "#000000"
+dark_foreground   = "#767676"
+light_foreground  = "#404040"
+bright_foreground = "#000000"
+
+red     = "#B50705"
+yellow  = "#6D552C"
+orange  = "#9A3B00"
+green   = "#006412"
+cyan    = "#0A607E"
+blue    = "#0000D3"
+magenta = "#AE065F"
+brown   = "#562C05"
+
+bright_red     = "#ED0D00"
+bright_yellow  = "#967100"
+bright_green   = "#108A07"
+bright_cyan    = "#007FAF"
+bright_blue    = "#0055CC"
+bright_magenta = "#E6007A"

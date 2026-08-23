@@ -1,0 +1,7 @@
+[tooltip]
+# Mac OS 9 Help tags were pale yellow with a hard black rule.
+background       = "#FFFFCC"
+background-alpha = 1.0
+text             = "#000000"
+border           = "#000000"
+border-alpha     = 1.0

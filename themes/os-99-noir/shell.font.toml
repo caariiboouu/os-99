@@ -1,0 +1,4 @@
+[font]
+# OS 9 chrome ran 12pt Charcoal at 1x. Bumped one step so it reads at
+# modern pixel density.
+base-size = 13
