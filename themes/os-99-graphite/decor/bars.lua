@@ -24,10 +24,19 @@ pcall(function()
   })
 end)
 
--- The plugin's own keys. These only exist once hyprbars is loaded, and on a
--- cold start the config is parsed before that -- hence the pcall, so an unknown
--- key cannot take the rest of the user's config down with it.
-pcall(function()
+-- The plugin's own keys. These exist only once hyprbars is loaded.
+--
+-- GUARDED, not merely pcall'd. hl.config RECORDS an unknown key as a config
+-- error before it raises, so a pcall catches the exception but still leaves
+-- "unknown config key 'plugin.hyprbars.*'" on Hyprland's error overlay -- once
+-- per key. On a cold start the config is parsed before the plugin loads, and
+-- with the kill switch set it never loads at all, so that overlay would be
+-- permanent. Skipping the block entirely is the only way to stay quiet.
+--
+-- Nothing is lost by skipping: os99-window-bars re-runs this same file through
+-- `hyprctl eval` once the plugin IS loaded, and on a reload with the plugin
+-- already up have_plugin is true and these apply immediately.
+if have_plugin then
   hl.config({ plugin = { hyprbars = {
     bar_height = 28,
     bar_color = "rgb(5F5F5F)",
@@ -53,7 +62,7 @@ pcall(function()
     bar_button_padding = 4,
     col = { text = "rgb(F0F0F0)" },
   } } })
-end)
+end
 
 -- The boxes. hyprbars clears its button list on every config reload and never
 -- repopulates ones added through the Lua API, so they have to be redeclared
@@ -61,7 +70,7 @@ end)
 -- makes it idempotent. Close alone on the LEFT, collapse and zoom on the RIGHT;
 -- buttons fill outward from their own edge, so zoom goes first to keep the
 -- top-right corner it has held since System 7.
-pcall(function()
+if have_plugin then
   hl.plugin.hyprbars.clear_buttons()
   local box = { bg_color = "rgb(5F5F5F)", fg_color = "rgb(F0F0F0)", size = 12, icon = "" }
   local function add(img, side, dispatch)
@@ -77,4 +86,4 @@ pcall(function()
   add("/bar_close.png",    "left",  "close")
   add("/bar_zoom.png",     "right", "maximize")
   add("/bar_collapse.png", "right", "float")
-end)
+end
