@@ -202,10 +202,10 @@ int newLuaButton(lua_State* L) {
 
         lua_getfield(L, 1, "action");
 
-        if (!lua_isstring(L, -1))
-            return Config::Lua::Bindings::Internal::configError(L, "add_button: action must be a string");
-
-        button.cmd = lua_tostring(L, -1);
+        // Optional now that `dispatch` exists, but exactly one of the two must
+        // be given -- a button that does nothing is a bug, not a style.
+        if (lua_isstring(L, -1))
+            button.cmd = lua_tostring(L, -1);
     }
 
     // Optional fields: absent is fine, so these do not error out like the rest.
@@ -222,6 +222,16 @@ int newLuaButton(lua_State* L) {
         if (lua_isstring(L, -1))
             button.side = lua_tostring(L, -1);
     }
+
+    {
+        Hyprutils::Utils::CScopeGuard x([L] { lua_pop(L, 1); });
+        lua_getfield(L, 1, "dispatch");
+        if (lua_isstring(L, -1))
+            button.dispatch = lua_tostring(L, -1);
+    }
+
+    if (button.cmd.empty() && button.dispatch.empty())
+        return Config::Lua::Bindings::Internal::configError(L, "add_button: needs either action (a shell command) or dispatch (a native dispatcher name)");
 
     g_pGlobalState->buttons.push_back(std::move(button));
 
@@ -369,20 +379,33 @@ APICALL EXPORT void PLUGIN_EXIT() {
 
     g_pHyprRenderer->m_renderPass.removeAllOfType("CBarPassElement");
 
-    // NOT removing the decorations here, deliberately. The obvious cleanup --
-    // iterate g_pGlobalState->bars and removeWindowDecoration() each one -- is a
-    // use-after-free: removing a decoration destroys the CHyprBar, and
-    // ~CHyprBar does std::erase(g_pGlobalState->bars, m_self), mutating the very
-    // vector being iterated. That aborts inside SGlobalState's deleter, which is
-    // a far more confusing crash than the one it was meant to fix. (Learned the
-    // hard way; the trace was CUniquePointer<SGlobalState>::...::_FUN.)
+    // REMOVE THE DECORATIONS. This is not optional, and an earlier version of
+    // this file wrongly claimed it was.
     //
-    // It is also unnecessary: Hyprland tracks decorations per plugin handle and
-    // drops them when the plugin unloads -- which is why upstream's PLUGIN_EXIT
-    // never did this either. The shuttingDown flag above is what actually
-    // matters, because it covers the window between teardown starting and those
-    // decorations going away, and that window is where the render pass fires.
+    // Each CHyprBar holds event-bus listeners -- mouse button, mouse move, three
+    // touch handlers -- whose lambdas live in THIS shared object. Hyprland does
+    // not destroy them for us on unload, so if the bars outlive the plugin those
+    // listeners keep firing into memory that is no longer mapped. The crash has
+    // no plugin frames at all, just a jump to an address belonging to no object:
+    //     #7  0x00007f...500 n/a (n/a + 0x0)
+    // which is what makes it look like a mystery rather than a use-after-unload.
+    //
+    // THE ORDER MATTERS. Removing a decoration destroys the CHyprBar, and
+    // ~CHyprBar does std::erase(g_pGlobalState->bars, m_self). Iterating the
+    // live vector while that happens invalidates the iterator underneath us and
+    // aborts inside SGlobalState's deleter -- a worse crash than this one, and
+    // the reason the removal was taken out the first time. Copy the handles,
+    // clear the live list so that erase becomes a no-op, then remove.
+    auto bars = g_pGlobalState->bars;
+    g_pGlobalState->bars.clear();
+    for (auto& b : bars) {
+        if (b)
+            HyprlandAPI::removeWindowDecoration(PHANDLE, b.get());
+    }
 
+    // And hand back the window-rule effects, which are keyed on indices this
+    // plugin owns. Leaving them registered after unload is the same class of
+    // dangling reference as leaving the decorations alive.
     Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->barColorRuleIdx);
     Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->titleColorRuleIdx);
     Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->nobarRuleIdx);

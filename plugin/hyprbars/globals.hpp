@@ -30,6 +30,19 @@ struct SHyprButton {
     // compositor down).
     uint64_t             imageStamp = UINT64_MAX;
 
+    // A NATIVE dispatcher name, run in-process instead of shelling out.
+    //
+    // `cmd` shells out, which costs a process per click and -- worse -- acts on
+    // whatever window is ACTIVE, not the one whose button was pressed. It also
+    // cannot express arguments the Lua layer does not expose: Hyprland's
+    // fullscreen binding ignores its mode argument, so there is no way to ask
+    // for FSMODE_MAXIMIZED (a maximise that keeps the decorations) from a
+    // string. A title-bar button that can only go true-fullscreen hides its own
+    // title bar and leaves no way back.
+    //
+    // One of "close", "kill", "maximize", "fullscreen", "float", "pin".
+    std::string          dispatch = "";
+
     // "left" / "right", or empty to follow bar_buttons_alignment. OS 9 puts the
     // close box alone on the left and collapse+zoom on the right, which upstream
     // cannot express -- it only has one global side.

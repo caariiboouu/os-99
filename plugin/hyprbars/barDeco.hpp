@@ -36,6 +36,7 @@ class CHyprBar : public IHyprWindowDecoration {
 
     virtual void                       updateWindow(PHLWINDOW);
     void                               syncFrameRounding();
+    void                               runNativeDispatch(const std::string& what);
 
     virtual void                       damageEntire();
 

@@ -1,4 +1,6 @@
 #include "barDeco.hpp"
+#include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+#include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include "ninePatch.hpp"
 
 #include <sys/stat.h>
@@ -465,6 +467,48 @@ void CHyprBar::handleMovement() {
     return;
 }
 
+// The small set of actions a title-bar box can sensibly perform, called in
+// process so they can be aimed at this window and given arguments the Lua
+// binding does not expose.
+//
+// "maximize" is the reason this exists. Hyprland's fullscreen dispatcher takes
+// an eFullscreenMode, but the Lua binding ignores the argument -- every form of
+// hl.dsp.window.fullscreen(...) lands on FSMODE_FULLSCREEN, which strips the
+// decorations. A title-bar button that hides its own title bar cannot be
+// clicked again to undo itself. FSMODE_MAXIMIZED keeps the frame, so the box
+// stays reachable and the action stays reversible.
+void CHyprBar::runNativeDispatch(const std::string& what) {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return;
+
+    using namespace Config::Actions;
+
+    // These return std::expected and are [[nodiscard]] for a reason: an action
+    // can legitimately refuse (a window that cannot float, say). Swallowing that
+    // is how a button becomes mysteriously inert, which is exactly the failure
+    // this whole change is fixing -- so say something.
+    const auto REPORT = [&what](ActionResult r) {
+        if (!r)
+            Log::logger->log(Log::ERR, "[hyprbars] button dispatch '{}' failed: {}", what, r.error().message);
+    };
+
+    if (what == "close")
+        REPORT(closeWindow(PWINDOW));
+    else if (what == "kill")
+        REPORT(killWindow(PWINDOW));
+    else if (what == "maximize")
+        REPORT(fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, true, PWINDOW));
+    else if (what == "fullscreen")
+        REPORT(fullscreenWindow(Fullscreen::FSMODE_FULLSCREEN, true, PWINDOW));
+    else if (what == "float")
+        REPORT(floatWindow(TOGGLE_ACTION_TOGGLE, PWINDOW));
+    else if (what == "pin")
+        REPORT(pinWindow(TOGGLE_ACTION_TOGGLE, PWINDOW));
+    else
+        Log::logger->log(Log::ERR, "[hyprbars] unknown button dispatch '{}'", what);
+}
+
 bool CHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, const bool BUTTONSRIGHT) {
     // Hit testing reads the same slots the renderer draws, so a box is always
     // clickable exactly where it appears.
@@ -472,7 +516,18 @@ bool CHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButt
         const auto& BOX = SLOT.box;
 
         if (VECINRECT(COORDS, BOX.x, BOX.y, BOX.x + BOX.w, BOX.y + BOX.h)) {
-            g_pKeybindManager->m_dispatchers["exec"](g_pGlobalState->buttons[SLOT.index].cmd);
+            const auto& BUTTON = g_pGlobalState->buttons[SLOT.index];
+
+            // Native dispatchers act on THIS bar's window, not on whatever
+            // happens to be active. That matters: clicking the close box of an
+            // unfocused window should close that window, and shelling out to
+            // `hyprctl dispatch` cannot express it.
+            if (!BUTTON.dispatch.empty()) {
+                runNativeDispatch(BUTTON.dispatch);
+                return true;
+            }
+
+            g_pKeybindManager->m_dispatchers["exec"](BUTTON.cmd);
             return true;
         }
     }

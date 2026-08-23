@@ -730,18 +730,19 @@ end)
 pcall(function()
   hl.plugin.hyprbars.clear_buttons()
   local box = {{ bg_color = "rgb({CFG[pal]["face"]})", fg_color = "rgb({TEXTCOL})", size = {BOX_LOGICAL}, icon = "" }}
-  local function add(img, side, action)
+  local function add(img, side, dispatch)
     hl.plugin.hyprbars.add_button({{ bg_color = box.bg_color, fg_color = box.fg_color,
-      size = box.size, icon = "", image = D .. img, side = side, action = action }})
+      size = box.size, icon = "", image = D .. img, side = side, dispatch = dispatch }})
   end
-  -- NOTE THE SYNTAX. Hyprland 0.5x parses `hyprctl dispatch <x>` as Lua --
-  -- literally `return hl.dispatch(<x>)` -- so the old string form
-  -- "hyprctl dispatch fullscreen 1" is a Lua SYNTAX ERROR and the button
-  -- silently does nothing. Dispatchers now live under hl.dsp.*, and the
-  -- single quotes keep the shell from eating the parentheses.
-  add("/bar_close.png",    "left",  "hyprctl dispatch 'hl.dsp.window.close()'")
-  add("/bar_zoom.png",     "right", "hyprctl dispatch 'hl.dsp.window.fullscreen()'")
-  add("/bar_collapse.png", "right", "hyprctl dispatch 'hl.dsp.window.float()'")
+  -- `dispatch` runs the action IN THE PLUGIN, against this window. The shell
+  -- form (`action = "hyprctl dispatch ..."`) still works but has two problems:
+  -- it acts on whatever window is ACTIVE rather than the one you clicked, and
+  -- it cannot ask for a maximise that keeps the decorations -- Hyprland's Lua
+  -- fullscreen binding ignores its mode argument and always goes true
+  -- fullscreen, which hides the very title bar you would click to undo it.
+  add("/bar_close.png",    "left",  "close")
+  add("/bar_zoom.png",     "right", "maximize")
+  add("/bar_collapse.png", "right", "float")
 end)
 """)
 
