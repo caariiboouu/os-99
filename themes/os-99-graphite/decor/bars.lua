@@ -85,5 +85,7 @@ if have_plugin then
   -- fullscreen, which hides the very title bar you would click to undo it.
   add("/bar_close.png",    "left",  "close")
   add("/bar_zoom.png",     "right", "maximize")
-  add("/bar_collapse.png", "right", "float")
+  -- windowshade, the one action that cannot strand you: rolling the window up
+  -- leaves the title bar as the only thing on screen, so the same box undoes it.
+  add("/bar_collapse.png", "right", "shade")
 end

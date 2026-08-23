@@ -505,8 +505,80 @@ void CHyprBar::runNativeDispatch(const std::string& what) {
         REPORT(floatWindow(TOGGLE_ACTION_TOGGLE, PWINDOW));
     else if (what == "pin")
         REPORT(pinWindow(TOGGLE_ACTION_TOGGLE, PWINDOW));
+    else if (what == "shade")
+        toggleShade();
     else
         Log::logger->log(Log::ERR, "[hyprbars] unknown button dispatch '{}'", what);
+}
+
+// WINDOWSHADE: roll the window up into just its title bar, and back down again.
+//
+// This is the one OS 9 title-bar action Hyprland has no dispatcher for, and the
+// only mapping for the collapse box that cannot strand the user. Everything
+// else that shrinks or hides a window also hides the bar you would click to
+// undo it -- true fullscreen strips decorations, and floating a large window
+// lands it at a negative y where the bar (which sits ABOVE the window box)
+// leaves the screen entirely. Shading is safe by construction: the bar is the
+// only thing left.
+//
+// Built from float + resize because that is all Hyprland offers. The window has
+// to be floating first: a tiled window's size belongs to the layout, so a
+// resize would be undone or would shove its neighbours around. The previous
+// tiled-ness and size are remembered so a second click restores both.
+//
+// The client does see the resize and will reflow -- a terminal will rewrap. That
+// is unavoidable under Wayland, where size is negotiated with the client rather
+// than imposed on it, and it is the honest cost of not having a compositor-level
+// shade. Height 1 rather than 0: a zero-height window is not a thing Hyprland
+// will give you, and the frame reserves bar_height above the window anyway, so
+// what remains on screen is exactly the bar plus its bezel.
+void CHyprBar::toggleShade() {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return;
+
+    using namespace Config::Actions;
+
+    const auto REPORT = [](const char* what, ActionResult r) {
+        if (!r)
+            Log::logger->log(Log::ERR, "[hyprbars] shade: {} failed: {}", what, r.error().message);
+    };
+
+    if (!m_bShaded) {
+        m_shadeRestoreSize = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+        m_shadeRestorePos  = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+        m_bShadeWasTiled   = !PWINDOW->m_isFloating;
+
+        if (m_bShadeWasTiled)
+            REPORT("float", floatWindow(TOGGLE_ACTION_ENABLE, PWINDOW));
+
+        // Floating a window does NOT keep it where it was: Hyprland centres it,
+        // and a window taller than the usable area lands at a negative y. Our
+        // frame reserves bar_height ABOVE the window box, so a y of -6 puts the
+        // title bar off the top of the screen -- and the whole point of shading
+        // is that the bar remains reachable. Put it back where it was, floored
+        // so the bar always clears the top edge.
+        // Resize FIRST, then move. Resizing a floating window re-centres it, so
+        // moving first has the position quietly undone a moment later.
+        REPORT("resize", resize(Vector2D{m_shadeRestoreSize.x, 1.0}, false, PWINDOW));
+
+        const auto HEIGHT = g_pGlobalState->config.barHeight->value();
+        Vector2D   pos    = m_shadeRestorePos;
+        if (pos.y < HEIGHT)
+            pos.y = HEIGHT;
+        REPORT("move", move(pos, false, PWINDOW));
+        m_bShaded = true;
+    } else {
+        REPORT("resize", resize(m_shadeRestoreSize, false, PWINDOW));
+        REPORT("move", move(m_shadeRestorePos, false, PWINDOW));
+
+        if (m_bShadeWasTiled)
+            REPORT("unfloat", floatWindow(TOGGLE_ACTION_DISABLE, PWINDOW));
+
+        m_bShaded = false;
+    }
+
+    damageEntire();
 }
 
 bool CHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, const bool BUTTONSRIGHT) {

@@ -37,6 +37,7 @@ class CHyprBar : public IHyprWindowDecoration {
     virtual void                       updateWindow(PHLWINDOW);
     void                               syncFrameRounding();
     void                               runNativeDispatch(const std::string& what);
+    void                               toggleShade();
 
     virtual void                       damageEntire();
 
@@ -71,6 +72,15 @@ class CHyprBar : public IHyprWindowDecoration {
     bool                       m_bLastEnabledState  = false;
     bool                       m_bForcedSquare      = false;
     bool                       m_bForcedFlat        = false;
+
+    // WINDOWSHADE. The OS 9 collapse box rolls a window up into just its title
+    // bar, and rolls it back down on a second click. Hyprland has no such
+    // dispatcher, so it is built here out of float + resize, remembering enough
+    // to put the window back exactly as it was.
+    bool                       m_bShaded            = false;
+    bool                       m_bShadeWasTiled     = false;
+    Vector2D                   m_shadeRestoreSize;
+    Vector2D                   m_shadeRestorePos;
     bool                       m_bWindowHasFocus    = false;
     std::optional<CHyprColor>  m_bForcedBarColor;
     std::optional<CHyprColor>  m_bForcedTitleColor;

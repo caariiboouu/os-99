@@ -132,6 +132,26 @@ Hyprlang::CParseResult onNewButton(const char* K, const char* V) {
 //
 // Rather than try to detect the loss, give callers a way to be idempotent:
 // clear, then add the set you want, every time.
+// Windowshade on the focused window, exposed so it can be bound to a key as
+// well as reached through the collapse box:
+//     hl.bind("SUPER + S", hl.dsp.exec_cmd("hyprctl eval 'hl.plugin.hyprbars.shade()'"))
+// The action lives on the bar rather than on the window because the bar is what
+// remembers the pre-shade size and position.
+int luaShade(lua_State* L) {
+    const auto WINDOW = Desktop::focusState()->window();
+    if (!WINDOW)
+        return 0;
+
+    for (auto& b : g_pGlobalState->bars) {
+        if (b && b->getOwner() == WINDOW) {
+            b->toggleShade();
+            break;
+        }
+    }
+
+    return 0;
+}
+
 int clearLuaButtons(lua_State* L) {
     g_pGlobalState->buttons.clear();
 
@@ -350,6 +370,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     else
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "add_button", ::newLuaButton);
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "clear_buttons", ::clearLuaButtons);
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "shade", ::luaShade);
     static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
     static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
 
