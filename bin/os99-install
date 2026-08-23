@@ -48,6 +48,59 @@ fi
 [[ -f $TOML ]] && good "config $TOML" || bad "config missing: $TOML"
 [[ -f $GEN  ]] && good "generator present" || bad "generator missing: $GEN"
 
+# ------------------------------------------------------------------ 1b. files
+# Copy the pieces into place, when run from a repository checkout. Everything
+# below this point works the same whether the files arrived here or were already
+# installed, which is why this is a copy step and not a whole install mode.
+REPO=""
+_self=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+[[ -d $_self/themes && -d $_self/hooks && -d $_self/bin ]] && REPO="$_self"
+
+head_ "Files"
+if [[ -z $REPO ]]; then
+  say "not running from a checkout -- checking what is already installed"
+elif $CHECK; then
+  say "(--check) would install from $REPO"
+else
+  install -d "$HOME/.local/bin"
+  for f in "$REPO"/bin/*; do install -m755 "$f" "$HOME/.local/bin/"; done
+  good "scripts -> ~/.local/bin"
+
+  # Hooks go through omarchy's own installer when it exists, so they land
+  # wherever it decides they belong; otherwise copy them ourselves.
+  if command -v omarchy-hook-install >/dev/null 2>&1; then
+    for t in theme-set post-boot; do
+      for f in "$REPO"/hooks/$t.d/*; do
+        [[ -e $f ]] || continue
+        omarchy-hook-install "$t" "$f" >/dev/null 2>&1 || install -Dm755 "$f" "$HOME/.config/omarchy/hooks/$t.d/$(basename "$f")"
+      done
+    done
+    good "hooks -> ~/.config/omarchy/hooks/*.d"
+  else
+    note "no Omarchy -- skipping hooks (nothing to hook into)"
+  fi
+
+  if [[ -d $HOME/.config/omarchy/themes || -d $HOME/.config/omarchy ]]; then
+    install -d "$HOME/.config/omarchy/themes"
+    for t in "$REPO"/themes/*; do cp -r "$t" "$HOME/.config/omarchy/themes/"; done
+    good "themes -> ~/.config/omarchy/themes ($(ls -1 "$REPO"/themes | wc -l) of them)"
+    install -d "$HOME/.config/omarchy/plugins"
+    cp -r "$REPO"/shell-plugin/* "$HOME/.config/omarchy/plugins/" 2>/dev/null && good "shell plugin -> ~/.config/omarchy/plugins"
+  else
+    note "no Omarchy -- themes not copied; generate art with --out instead (see README)"
+  fi
+
+  # NEVER clobber an existing tuning file. Someone re-running this after
+  # adjusting ridge counts and palettes should not silently lose that.
+  for dest in "$HOME/.config/omarchy/os99-theme.toml" "$HOME/.config/os99/os99-theme.toml"; do
+    d=$(dirname "$dest")
+    [[ -d $d ]] || continue
+    if [[ -f $dest ]]; then good "config already present at ${dest/#$HOME/\~} -- left alone"
+    else install -Dm644 "$REPO/os99-theme.toml" "$dest"; good "config -> ${dest/#$HOME/\~}"; fi
+    break
+  done
+fi
+
 # -------------------------------------------------------------------- 2. scale
 head_ "Display scale"
 DETECTED=$(hyprctl monitors -j 2>/dev/null | python3 -c '
