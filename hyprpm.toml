@@ -1,0 +1,36 @@
+# hyprpm manifest.
+#
+# The theme needs a modified hyprbars: stock hyprbars fills the title bar with a
+# solid rect, so it cannot draw a pinstripe, and Hyprland's own border
+# interpolates a single gradient across the whole window, so it can never put a
+# crisp 1px highlight on the top-left and a 1px shadow on the bottom-right.
+#
+# The plugin source lives in plugin/hyprbars rather than in a separate fork
+# repository, so there is ONE url to install and one place to file issues.
+# hyprpm builds it against whatever Hyprland you are running.
+#
+#     hyprpm add https://github.com/caariiboouu/os-99
+#     hyprpm enable hyprbars-os99
+#     hyprpm reload -n
+#
+# It derives from hyprbars (BSD 3-Clause, Hypr Development) -- see
+# plugin/LICENSE and plugin/README.md for what was changed and why. It still
+# reports itself to Hyprland as `hyprbars`, because the Lua API it exposes is
+# hl.plugin.hyprbars.* and the theme calls it by name, so it cannot be loaded
+# alongside upstream hyprbars. Pick one.
+#
+# No commit_pins: those map Hyprland commits to commits in UPSTREAM's plugin
+# repo, and those hashes do not exist here. Without them hyprpm builds HEAD,
+# which is the honest behaviour for a tree with no release history of its own.
+
+[repository]
+name = "os-99"
+authors = ["Vaxry", "Joel"]
+
+[hyprbars-os99]
+description = "hyprbars with nine-patch frame art: draws an OS 99 window frame around the whole window, not just a title bar"
+authors = ["Vaxry", "Joel"]
+output = "plugin/hyprbars/hyprbars.so"
+build = [
+    "make -C plugin/hyprbars all",
+]

@@ -3,3 +3,5 @@ __pycache__/
 *.bak
 *.bak[0-9]*
 *.orig
+plugin/hyprbars/*.so
+plugin/hyprbars/build/

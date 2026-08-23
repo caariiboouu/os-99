@@ -5,7 +5,10 @@
 # loading and the OS 9 window frames silently disappear. Re-run this, then
 # re-apply the theme.
 set -e
-SRC="$HOME/dev/hyprland-plugins-os9/hyprbars"
+# The plugin source now lives inside this repository rather than in a separate
+# fork checkout, so there is one place to build from. OS99_PLUGIN_SRC overrides.
+SRC="${OS99_PLUGIN_SRC:-$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/plugin/hyprbars}"
+[[ -d $SRC ]] || SRC="$HOME/dev/os-99/plugin/hyprbars"
 LIBDIR="$HOME/.local/lib"
 PTR="$LIBDIR/libhyprbars-os99.path"      # names the .so the hook should load
 
@@ -13,8 +16,7 @@ echo "Hyprland:      $(hyprctl version | head -1)"
 echo "pkg-config:    $(pkg-config --modversion hyprland)"
 
 cd "$SRC"
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release >/dev/null
-cmake --build build -j"$(nproc)"
+make -j"$(nproc)" all
 
 # CRITICAL: every build gets its own filename, keyed by content hash.
 #
@@ -27,7 +29,7 @@ cmake --build build -j"$(nproc)"
 # on 2026-08-20; the second is the quieter and more confusing one.
 #
 # A fresh path sidesteps both: nothing is mapped at it, so the load is real.
-HASH=$(sha256sum build/libhyprbars.so | cut -c1-12)
+HASH=$(sha256sum hyprbars.so | cut -c1-12)
 NEW="$LIBDIR/libhyprbars-os99-$HASH.so"
 
 mkdir -p "$LIBDIR"
@@ -40,7 +42,7 @@ if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   sleep 1
 fi
 
-install -m755 build/libhyprbars.so "$NEW.tmp"
+install -m755 hyprbars.so "$NEW.tmp"
 mv -f "$NEW.tmp" "$NEW"
 echo "$NEW" > "$PTR"
 

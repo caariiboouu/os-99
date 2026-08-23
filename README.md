@@ -42,14 +42,18 @@ the theme also ships colours for Omarchy's bar, menus and notifications.
 ### 1. The plugin (everyone)
 
 ```
-hyprpm add https://github.com/caariiboouu/os99-hyprbars
+hyprpm add https://github.com/caariiboouu/os-99
 hyprpm enable hyprbars-os99
 hyprpm reload -n
 ```
 
-`hyprpm` builds it against your own Hyprland, so there is no ABI mismatch to
-manage. Note it reports itself to Hyprland as `hyprbars` and therefore cannot be
-loaded alongside upstream hyprbars — pick one.
+Same repository — the plugin source is in [`plugin/`](plugin/). `hyprpm` builds
+it against your own Hyprland, so there is no ABI mismatch to manage.
+
+It derives from [hyprbars](https://github.com/hyprwm/hyprland-plugins) and keeps
+its BSD 3-Clause licence; [`plugin/README.md`](plugin/README.md) lists what was
+changed and why. It still reports itself to Hyprland as `hyprbars`, so it cannot
+be loaded alongside upstream hyprbars — pick one.
 
 ### 2a. On Omarchy
 
