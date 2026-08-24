@@ -19,8 +19,6 @@ def C(h, a=255):
     h = h.lstrip("#")
     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), a)
 
-BLACK, WHITE = C("000000"), C("FFFFFF")
-
 def mix(a, b, t=0.5):
     """Blend two palette colours. Used to step a bevel inward so a 2px wall
     reads as a dish rather than a trench."""
@@ -102,10 +100,6 @@ if isinstance(_scale_cfg, str) and _scale_cfg.strip().lower() == "auto":
         SCALE, SCALE_NOTE = _detected, f"auto-detected from {_note}"
 else:
     SCALE = float(_scale_cfg)
-
-def dev(v):
-    return int(round(v * SCALE))
-
 
 # ---------------------------------------------------------------------------
 # THE FONT. OS 9 used Charcoal, but Charcoal is Apple's and cannot be shipped,
@@ -292,17 +286,20 @@ H          = TOP + 24 + SIDE
 BOX_LOGICAL = max(1, int(round(FIELD / SCALE)))
 BOX_S       = int(round(BOX_LOGICAL * SCALE))
 BOX_DRIFT   = BOX_LOGICAL - int(_btn["size"])
-CAP        = 3          # cap width for the legacy standalone bar art
 
-FACE = LIT = SHADOW = DEEP = PRESSED = OUTLINE = None
+FACE = LIT = SHADOW = DEEP = OUTLINE = None
 STRIPE = STRIPE_HI = STRIPE_LO = RULE = WELL_LO = WELL_HI = TEXTCOL = DISH = None
 
 def use(name):
-    global FACE, LIT, SHADOW, DEEP, PRESSED, OUTLINE
+    global FACE, LIT, SHADOW, DEEP, OUTLINE
     global STRIPE, STRIPE_HI, STRIPE_LO, RULE, WELL_LO, WELL_HI, TEXTCOL, DISH
     q = CFG[name]
     FACE, LIT, SHADOW = C(q["face"]), C(q["lit"]), C(q["shadow"])
-    DEEP, PRESSED = C(q["deep"]), C(q["pressed"])
+    # NOTE: the palette's `pressed` colour is deliberately not read. box()
+    # produces the pressed look by shifting its own interior gradient, not by
+    # swapping in a flat colour, so binding it here only created a value nobody
+    # used -- and made a toml without a `pressed` key raise KeyError for nothing.
+    DEEP = C(q["deep"])
     OUTLINE, RULE = C(q["outline"]), C(q["rule"])
     STRIPE_HI, STRIPE_LO = C(q["stripe_hi"]), C(q["stripe_lo"])
     STRIPE = STRIPE_LO                      # legacy name, used by the bar art
