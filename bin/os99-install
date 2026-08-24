@@ -156,8 +156,24 @@ elif have "Chicago Kare"; then
   note "Chicago Kare (MIT) -- usable, but drawn small; sizes are scaled 1.25x"
 else
   bad "none of Charcoal / ChicagoFLF / Chicago Kare installed"
-  say "      -> yay -S ttf-chicagoflf        # public domain, closest match"
-  say "         yay -S ttf-chicago-kare      # MIT alternative"
+  # Name the right command for the distro rather than assuming Arch. The theme
+  # works without any of these -- it falls back to sans-serif -- so this is
+  # advice, not a requirement.
+  if command -v yay >/dev/null 2>&1; then
+    say "      -> yay -S ttf-chicagoflf          # public domain, closest match"
+  elif command -v paru >/dev/null 2>&1; then
+    say "      -> paru -S ttf-chicagoflf         # public domain, closest match"
+  elif command -v pacman >/dev/null 2>&1; then
+    say "      -> the AUR package is ttf-chicagoflf (needs an AUR helper)"
+  elif command -v nix-env >/dev/null 2>&1; then
+    say "      -> add a ChicagoFLF font derivation to your Nix config"
+  elif command -v dnf >/dev/null 2>&1 || command -v apt >/dev/null 2>&1; then
+    say "      -> no distro package; drop ChicagoFLF.ttf in ~/.local/share/fonts"
+    say "         then run: fc-cache -f"
+  else
+    say "      -> drop ChicagoFLF.ttf in ~/.local/share/fonts, then fc-cache -f"
+  fi
+  say "         ChicagoFLF is public domain; Chicago Kare is MIT."
   say "      Charcoal is Apple's and is deliberately not redistributed here."
 fi
 

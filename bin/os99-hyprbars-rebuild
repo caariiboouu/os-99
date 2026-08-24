@@ -50,9 +50,26 @@ make -j"$(nproc)" all
 # toolchain stubs that are always unresolved and always harmless.
 echo "verifying symbols..."
 _norm() { awk '{print $NF}' | sed 's/@.*//' | sort -u; }
+# Find the Hyprland binary rather than assuming /usr/bin. NixOS has no /usr/bin
+# at all, and hardcoding it would make every Hyprland symbol look unresolved --
+# turning this safety check into a false refusal to install. Prefer the RUNNING
+# compositor, since that is the one the plugin has to match.
+HYPRBIN="${HYPRBIN:-}"
+if [[ -z $HYPRBIN ]]; then
+  for _hl in $(pgrep -x Hyprland 2>/dev/null); do
+    _exe=$(readlink -f "/proc/$_hl/exe" 2>/dev/null) || continue
+    [[ -x $_exe ]] && { HYPRBIN="$_exe"; break; }
+  done
+fi
+[[ -n $HYPRBIN ]] || HYPRBIN=$(command -v Hyprland 2>/dev/null || true)
+if [[ -z $HYPRBIN ]]; then
+  echo "!! cannot locate the Hyprland binary; skipping the symbol check." >&2
+  echo "!! Set HYPRBIN=/path/to/Hyprland to re-enable it." >&2
+fi
+
 _allowed() {
-  { nm -D --defined-only /usr/bin/Hyprland 2>/dev/null
-    ldd /usr/bin/Hyprland 2>/dev/null | awk '/=>/{print $3}' | xargs -r -n1 nm -D --defined-only 2>/dev/null
+  { [[ -n $HYPRBIN ]] && nm -D --defined-only "$HYPRBIN" 2>/dev/null
+    [[ -n $HYPRBIN ]] && ldd "$HYPRBIN" 2>/dev/null | awk '/=>/{print $3}' | xargs -r -n1 nm -D --defined-only 2>/dev/null
     ldd hyprbars.so    2>/dev/null | awk '/=>/{print $3}' | xargs -r -n1 nm -D --defined-only 2>/dev/null
   } | _norm
 }

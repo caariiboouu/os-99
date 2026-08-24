@@ -14,7 +14,14 @@
 # handle and keeps running the old code.
 PTR="$HOME/.local/lib/libhyprbars-os99.path"
 SO=$(cat "$PTR" 2>/dev/null || echo "$HOME/.local/lib/libhyprbars-os99.so")
-STOCK=/usr/lib/libhyprbars.so
+# Upstream hyprbars, if the distro ships it -- only ever used to UNLOAD it, so
+# that it and this fork cannot both be resident. Located rather than assumed:
+# /usr/lib is wrong on NixOS and on multilib layouts. Empty is fine, it just
+# means there is nothing to unload.
+STOCK=""
+for _c in /usr/lib/libhyprbars.so /usr/lib64/libhyprbars.so /usr/local/lib/libhyprbars.so; do
+  [[ -f $_c ]] && { STOCK="$_c"; break; }
+done
 
 # ---------------------------------------------------------------------------
 # WHERE THINGS LIVE. Detected, not configured.
@@ -65,7 +72,7 @@ done
 # a missing art directory just means "not installed" -- in which case leave the
 # compositor entirely alone rather than imposing someone else's border colours.
 if (( HAVE_OMARCHY )) && [[ $LAYOUT != explicit && ! -f "$OMARCHY_THEME/os99.marker" ]]; then
-  hyprctl plugin list 2>/dev/null | grep -q hyprbars && { hyprctl plugin unload "$SO" >/dev/null 2>&1; hyprctl plugin unload "$STOCK" >/dev/null 2>&1; }
+  hyprctl plugin list 2>/dev/null | grep -q hyprbars && { hyprctl plugin unload "$SO" >/dev/null 2>&1; [[ -n $STOCK ]] && hyprctl plugin unload "$STOCK" >/dev/null 2>&1; }
   hyprctl eval 'hl.config({
     general = { border_size = 2, col = {
       active_border = { colors = { "rgba(33ccffee)", "rgba(00ff99ee)" }, angle = 45 },

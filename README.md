@@ -31,11 +31,17 @@ the theme also ships colours for Omarchy's bar, menus and notifications.
 
 - Hyprland (developed against **0.56.2**)
 - `python3` ≥ 3.11 — standard library only, no pip install
-- A font. It tries **Charcoal**, then **ChicagoFLF**, then **Chicago Kare**, then
-  gives up and uses `sans-serif`. Charcoal is Apple's and is deliberately not
-  bundled here; `ttf-chicagoflf` (public domain) is a metric drop-in:
+- A font — optional. It tries **Charcoal**, then **ChicagoFLF**, then **Chicago
+  Kare**, then falls back to `sans-serif`, so it works with none of them
+  installed. Charcoal is Apple's and is deliberately not bundled here;
+  **ChicagoFLF** (public domain) is a metric drop-in and the one to want.
 
+      # Arch, via an AUR helper
       yay -S ttf-chicagoflf
+      # anywhere else: drop ChicagoFLF.ttf in ~/.local/share/fonts
+      fc-cache -f
+
+  `os99-install` names the right command for your distro.
 
 ## Install
 
