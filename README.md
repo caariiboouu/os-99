@@ -1,6 +1,6 @@
 # OS 99
 
-A Hyprland theme for people who peaked in 1999.
+A Hyprland theme for people who want a little Mac OS 9 back in their lives. A modern take on light, dark, and mixed modes.
 
 Square corners, a chiselled bezel around the whole window, a pinstriped title
 bar, and a hard offset drop shadow. It is an original reimplementation of a
@@ -23,10 +23,6 @@ top edge — Hyprland's own border can't do this, because it interpolates a sing
 gradient across the window and so can never put a crisp 1px highlight on the
 top-left and a 1px shadow on the bottom-right.
 
-That core is **compositor-generic**. The plugin has no idea Omarchy exists.
-Omarchy just adds somewhere convenient to put the art and hooks to apply it, so
-the theme also ships colours for Omarchy's bar, menus and notifications.
-
 ## Requirements
 
 - Hyprland (developed against **0.56.2**)
@@ -45,7 +41,7 @@ the theme also ships colours for Omarchy's bar, menus and notifications.
 
 ## Install
 
-### 1. The plugin (everyone)
+### 1. The plugin
 
 ```
 hyprpm add https://github.com/caariiboouu/os-99
