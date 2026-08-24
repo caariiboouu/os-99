@@ -65,6 +65,46 @@ ARGS = _ap.parse_args()
 _bar, _frame = CFG["bar"], CFG["frame"]
 _btn, _txt   = CFG["buttons"], CFG["text"]
 
+# --- validate anything that reaches a shell or a Lua source ------------------
+# These values are interpolated into bar.env, which os99-window-bars SOURCES as
+# bash, and into bars.lua, which the compositor EXECUTES. A colour containing a
+# double quote therefore closes the string and injects:
+#
+#     face = 'D5D6D5"; rm -rf ~; #'
+#     -> OS99_FACE="rgb(D5D6D5"; rm -rf ~; #)"
+#
+# The toml is not always the user's own: each theme ships one in its decor
+# directory, so this is attacker-supplied for anyone installing a third-party
+# OS 99 theme. That is admittedly a boundary already crossed -- a theme's
+# hyprland.lua is executed too -- but a colour field is not where anyone expects
+# code, and the check costs nothing.
+#
+# VALIDATE rather than escape. Escaping would faithfully pass through a
+# malformed colour and produce baffling art; refusing names the mistake, which
+# is also what a typo deserves.
+import re
+
+_HEX = re.compile(r"^[0-9A-Fa-f]{6}$")
+
+def _bad(where, value, why):
+    sys.exit(f"os99-theme.toml: {where} = {value!r} {why}\n"
+             f"  Read from {CFG_PATH}")
+
+for _pal in ("light", "dark"):
+    for _key, _val in (CFG.get(_pal) or {}).items():
+        if not isinstance(_val, str) or not _HEX.match(_val):
+            _bad(f"[{_pal}] {_key}", _val, "is not a 6-digit hex colour like \"D5D6D5\"")
+
+if _bar.get("clear_color") and not _HEX.match(str(_bar["clear_color"])):
+    _bad("[bar] clear_color", _bar["clear_color"], "is not a 6-digit hex colour")
+
+# A font family reaches both files as a bare string. Fontconfig family names are
+# plain text; anything with a quote, backslash or newline is either an attack or
+# a mistake, and neither should be passed along.
+if any(c in str(_txt.get("font", "")) for c in '"\\\n\r'):
+    _bad("[text] font", _txt.get("font"), "contains a quote, backslash or newline")
+
+
 # Everything below is authored in DEVICE pixels: logical size * display scale.
 # The plugin blits the result 1:1 (frame_texture_unscaled), so the compositor
 # never resamples the art and a fine hatch stays exact. All the toml values stay
