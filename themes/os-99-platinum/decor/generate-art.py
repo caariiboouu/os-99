@@ -311,7 +311,6 @@ MARGIN_BOT = _slack - MARGIN_TOP
 
 FONT_FAMILY, FONT_RATIO, FONT_NOTE = resolve_font(str(_txt["font"]))
 TEXT_SIZE  = int(round(int(_txt["size"]) * FONT_RATIO))
-UI_SIZE    = int(round(int(_txt.get("ui_size", 11)) * FONT_RATIO))
 
 W          = 64
 SIDE       = int(round(int(_frame["bezel"]) * SCALE))
@@ -681,7 +680,6 @@ OS99_BTN_GAP={int(_btn["gap"])}
 OS99_BTN_CLEAR_PAD={int(_btn["clear_pad"])}
 OS99_TEXT_SIZE={TEXT_SIZE}
 OS99_TEXT_FONT="{FONT_FAMILY}"
-OS99_UI_FONT="{FONT_FAMILY} {UI_SIZE}"
 OS99_TEXT_CLEAR_PAD={int(_txt["clear_pad"])}
 OS99_CLEAR_INSET_TOP={CLEAR_T}
 OS99_CLEAR_INSET_BOTTOM={CLEAR_B}
@@ -808,7 +806,7 @@ if ARGS.quiet:
     raise SystemExit(0)
 print()
 print(f"  scale       {SCALE}   {SCALE_NOTE}")
-print(f"  font        {FONT_FAMILY} @ {TEXT_SIZE}px bar / {UI_SIZE}pt ui   ({FONT_NOTE})")
+print(f"  font        {FONT_FAMILY} @ {TEXT_SIZE}px   ({FONT_NOTE})")
 print(f"  bar height  {BAR_H}px device = {BAR_LOGICAL}px logical"
       + ("" if EXACT_H else "   <-- not a whole number of device px; art will stretch")
       + (f"   [quantised to a multiple of {BAR_QUANTUM} for scale {SCALE}]" if BAR_QUANTUM > 1 else "")

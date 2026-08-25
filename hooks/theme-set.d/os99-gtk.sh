@@ -38,10 +38,6 @@ THEME_DIR="$HOME/.local/state/omarchy/current/theme"
 # Kare) and records the result, with any size compensation already applied, in
 # bar.env. Read it from there so the menu font and the title-bar font can never
 # disagree about which face exists.
-OS99_UI_FONT="Charcoal 11"
-[[ -r "$THEME_DIR/decor/bar.env" ]] && \
-  OS99_UI_FONT=$(sed -n 's/^OS99_UI_FONT="\(.*\)"$/\1/p' "$THEME_DIR/decor/bar.env" | tail -1)
-[[ -n $OS99_UI_FONT ]] || OS99_UI_FONT="Charcoal 11"
 GTK4_CSS="$HOME/.config/gtk-4.0/gtk.css"
 FC_LINK="$HOME/.config/fontconfig/conf.d/60-os99-fonts.conf"
 GHOSTTY_FONT="$HOME/.config/ghostty/os99-font.conf"
@@ -67,7 +63,17 @@ if [[ -f $THEME_DIR/os99.marker ]]; then
   # reserves width for them. An empty layout removes them entirely.
   gsettings set org.gnome.desktop.wm.preferences button-layout ":"
   # The system font: menus, buttons, labels. Chrome, not documents.
-  gsettings set org.gnome.desktop.interface font-name "$OS99_UI_FONT"
+  # font-name is NOT set. It is GTK's UI font, and it reaches INSIDE application
+  # windows -- Chrome draws its tab strip with it, Nautilus its header and
+  # sidebar, every GTK app its labels and buttons. The theme is the window FRAME
+  # and the menu bar; what an application puts inside its own window is its
+  # business. Chrome tabs in Charcoal looked like the theme had escaped.
+  #
+  # The chrome that should be Charcoal does not come from here and is unaffected:
+  # title bars from plugin:hyprbars:bar_text_font, the menu bar from the
+  # j.os99-font shell plugin, and Hyprland groupbars from os99-window-bars. Each
+  # names the family directly.
+  gsettings reset org.gnome.desktop.interface font-name
 else
   gsettings set org.gnome.desktop.wm.preferences button-layout "appmenu:close"
   gsettings reset org.gnome.desktop.interface font-name
