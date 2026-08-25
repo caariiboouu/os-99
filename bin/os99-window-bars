@@ -120,7 +120,27 @@ unload_hyprbars() {
 # a missing art directory just means "not installed" -- in which case leave the
 # compositor entirely alone rather than imposing someone else's border colours.
 if (( HAVE_OMARCHY )) && [[ $LAYOUT != explicit && ! -f "$OMARCHY_THEME/os99.marker" ]]; then
-  hyprctl plugin list 2>/dev/null | grep -q hyprbars && unload_hyprbars
+  # Turn the bars OFF rather than unloading the plugin.
+  #
+  # plugin:hyprbars:enabled zeroes the decoration's reserved extents, so the bar
+  # stops drawing AND stops taking space -- the window geometry is what it would
+  # be with no plugin at all. What differs is the risk: cycling a .so has taken
+  # this session down twice, and dlopen/dlclose churn on every theme switch is a
+  # lot of exposure for something a boolean settles.
+  #
+  # This holds across a `hyprctl reload` because the plugin's DEFAULT is off. A
+  # reload discards eval'd values and rebuilds from the config chain; only an
+  # OS 99 theme's hyprland.lua sources a bars.lua that sets enabled = true, so
+  # any other theme lands on the default. That is the actual tie to the theme --
+  # the hook just makes it take effect immediately instead of at the next reload.
+  #
+  # The plugin stays resident on other themes, costing a little memory and a
+  # zero-extent decoration per window. That is the price of not cycling a .so.
+  if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+    hyprctl eval 'hl.config({ plugin = { hyprbars = { enabled = false } } })' >/dev/null 2>&1
+    # Opt-in for anyone who would rather have the plugin gone entirely.
+    [[ -n ${OS99_UNLOAD_ON_SWITCH:-} ]] && unload_hyprbars
+  fi
   hyprctl eval 'hl.config({
     general = { border_size = 2, col = {
       active_border = { colors = { "rgba(33ccffee)", "rgba(00ff99ee)" }, angle = 45 },

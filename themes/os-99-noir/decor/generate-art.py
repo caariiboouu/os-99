@@ -747,6 +747,10 @@ end)
 -- already up have_plugin is true and these apply immediately.
 if have_plugin then
   hl.config({{ plugin = {{ hyprbars = {{
+    -- The plugin defaults to off, so a theme that says nothing about hyprbars
+    -- gets no title bars. This is the file that says otherwise, and only an
+    -- OS 99 theme's hyprland.lua sources it.
+    enabled = true,
     bar_height = {BAR_LOGICAL},
     bar_color = "rgb({CFG[pal]["face"]})",
     bar_texture = D .. "/bar",
