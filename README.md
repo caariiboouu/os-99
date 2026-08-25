@@ -90,6 +90,36 @@ dofile(os99_dir .. "/bars.lua")
 Set `OS99_DIR` to keep the art somewhere else, and `OS99_PALETTE=dark` for the
 Graphite palette.
 
+## The title bar boxes
+
+The close box is on the left; zoom and collapse are on the right, as they were.
+
+Collapse **minimizes**: the window is parked on a workspace called
+`os99-minimized` and the bar widget offers it back. Hyprland has no minimize, and
+every in-place imitation of one hides the title bar you would click to undo it,
+so the window goes somewhere rather than shrinking in place.
+
+A parked window is never hidden. It stays in `hyprctl clients`, which means there
+are three independent ways back and no way to strand one:
+
+```
+os99-minimize list        # what is parked
+os99-minimize restore     # bring back the most recent
+os99-minimize restore-all
+```
+
+...the bar widget (`j.os99-minimized`, Omarchy only), or simply switching to that
+workspace. If you would rather bind it than click it:
+
+```lua
+hl.bind("SUPER + M", hl.dsp.exec_cmd("hyprctl eval 'hl.plugin.hyprbars.minimize()'"))
+```
+
+Windowshade -- rolling the window up into just its bar, the way System 7 did --
+is still there as `hl.plugin.hyprbars.shade()`, but it is not on a box. Rolling a
+window up means floating it, and Hyprland re-centres a floated window, which can
+put the bar above the top of the screen.
+
 ## Why the art is generated rather than shipped as final PNGs
 
 The frame is authored at **device** resolution and blitted 1:1, so the

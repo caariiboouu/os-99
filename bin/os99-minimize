@@ -1,0 +1,159 @@
+#!/bin/bash
+# Minimize a window out of the way, and put it back.
+#
+# Hyprland has no minimize. What it has is workspaces, so "minimized" here means
+# "parked on a workspace you are not looking at". The window keeps running and
+# keeps its size; it is simply somewhere else.
+#
+# The park is a REGULAR named workspace, not a special one, and that choice is
+# load-bearing. Windows on a hidden special workspace vanish from `hyprctl
+# clients` and from hl.get_windows() -- so nothing can enumerate them, and a
+# window would be unreachable if the bar widget failed to load. Windows on a
+# non-visible regular workspace stay fully listed. The cost is a workspace pill
+# in the bar, which doubles as the escape hatch: click it and there they are.
+#
+# Everything here goes through Lua dispatch, because that is what `hyprctl
+# dispatch` speaks in Hyprland 0.56. Two forms matter and both were established
+# by testing rather than by reading docs, which do not cover them:
+#
+#   * a window is targeted by iterating hl.get_windows() and matching .address.
+#     hl.get_window("0x...") returns NIL for an address string, and a nil window
+#     key makes the dispatcher silently act on the FOCUSED window instead. That
+#     failure mode moves the wrong window and gives no error.
+#   * a named workspace is "name:foo". A bare "foo" is an Invalid workspace.
+#   * follow = false keeps the current workspace from switching. `silent` is not
+#     the key, despite being the old dispatcher's name for it.
+set -uo pipefail
+
+WS=${OS99_MINIMIZE_WS:-os99-minimized}
+
+# The workspace name is interpolated into a Lua string literal, so it must not
+# be able to close that literal. Also keeps it a legal Hyprland workspace name.
+if [[ ! $WS =~ ^[A-Za-z0-9_-]+$ ]]; then
+  echo "os99-minimize: bad workspace name '$WS' (use letters, digits, - and _)" >&2
+  exit 2
+fi
+
+die() { echo "os99-minimize: $*" >&2; exit 1; }
+have() { command -v "$1" >/dev/null 2>&1; }
+
+have hyprctl || die "hyprctl not found -- is Hyprland running?"
+have python3 || die "python3 not found"
+
+# Run a Lua expression that resolves $1 (an address) to a window object and
+# applies $2 (a dispatcher call, with `w` in scope). no_op keeps hl.dispatch
+# happy when the address is gone -- a window can close between list and act.
+on_window() {
+  local addr=$1 call=$2
+  [[ $addr =~ ^0x[0-9a-fA-F]+$ ]] || die "bad window address '$addr'"
+  hyprctl dispatch "(function()
+    for _, w in ipairs(hl.get_windows()) do
+      if w.address == \"$addr\" then return $call end
+    end
+    return hl.dsp.no_op()
+  end)()" >/dev/null
+}
+
+# Hyprland takes a numeric workspace as-is but a named one only as "name:x".
+ws_ref() { [[ $1 =~ ^[0-9]+$ ]] && echo "$1" || echo "name:$1"; }
+
+active_window() {
+  hyprctl activewindow -j | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("address") or "")
+except Exception: print("")'
+}
+
+active_workspace() {
+  hyprctl activeworkspace -j | python3 -c 'import json,sys
+try: print(json.load(sys.stdin)["name"])
+except Exception: print("")'
+}
+
+# Minimized windows, most-recently-focused first. focusHistoryID is Hyprland's
+# own recency counter (0 = current), which is the closest thing to "the one you
+# just put away" without keeping state of our own -- and state of our own would
+# go stale every time a window closed while parked.
+minimized() {
+  hyprctl clients -j | WS="$WS" python3 -c '
+import json, os, sys
+ws = os.environ["WS"]
+out = [c for c in json.load(sys.stdin) if c.get("workspace", {}).get("name") == ws]
+out.sort(key=lambda c: c.get("focusHistoryID", 1 << 30))
+for c in out:
+    title = (c.get("title") or c.get("class") or "window").replace("\t", " ")
+    print("\t".join([c["address"], c.get("class", ""), title]))'
+}
+
+cmd_minimize() {
+  local addr=${1:-}
+  [[ -n $addr ]] || addr=$(active_window)
+  [[ -n $addr ]] || die "no active window to minimize"
+  on_window "$addr" "hl.dsp.window.move({ window = w, workspace = \"$(ws_ref "$WS")\", follow = false })"
+}
+
+cmd_list() {
+  local n=0 line
+  while IFS=$'\t' read -r addr class title; do
+    n=$((n + 1))
+    printf '%d\t%s\t%s\t%s\n' "$n" "$addr" "$class" "$title"
+  done < <(minimized)
+  [[ $n -eq 0 ]] && return 1
+  return 0
+}
+
+cmd_count() { minimized | wc -l; }
+
+cmd_restore() {
+  local want=${1:-1} addr="" here
+  if [[ $want =~ ^0x[0-9a-fA-F]+$ ]]; then
+    addr=$want
+  elif [[ $want =~ ^[0-9]+$ ]]; then
+    addr=$(minimized | sed -n "${want}p" | cut -f1)
+  else
+    die "restore takes an index or a 0x address, not '$want'"
+  fi
+  [[ -n $addr ]] || die "nothing minimized at that position"
+
+  # Restore to where the user is NOW, not where the window came from. Origin is
+  # not recorded anywhere, and "comes back to the workspace I am looking at" is
+  # what a taskbar does and what people expect.
+  here=$(active_workspace)
+  [[ -n $here ]] || die "could not read the active workspace"
+  on_window "$addr" "hl.dsp.window.move({ window = w, workspace = \"$(ws_ref "$here")\", follow = false })"
+  on_window "$addr" "hl.dsp.focus({ window = w })"
+}
+
+cmd_restore_all() {
+  local addr
+  while IFS=$'\t' read -r addr _class _title; do
+    [[ -n $addr ]] && cmd_restore "$addr"
+  done < <(minimized)
+}
+
+usage() {
+  cat <<'USAGE'
+usage: os99-minimize [command]
+
+  minimize [ADDR]   park a window (default: the active one)
+  list              minimized windows, one per line: N, address, class, title
+  count             how many are minimized
+  restore [N|ADDR]  bring one back to the current workspace (default: 1)
+  restore-all       bring them all back
+  workspace         print the workspace name being used
+
+The park workspace is os99-minimized. Override with OS99_MINIMIZE_WS.
+Nothing is ever hidden from `hyprctl clients`, so a parked window is always
+recoverable -- worst case, switch to that workspace by hand.
+USAGE
+}
+
+case "${1:-minimize}" in
+  minimize)    shift || true; cmd_minimize "${1:-}" ;;
+  list)        cmd_list ;;
+  count)       cmd_count ;;
+  restore)     shift || true; cmd_restore "${1:-1}" ;;
+  restore-all) cmd_restore_all ;;
+  workspace)   echo "$WS" ;;
+  -h|--help|help) usage ;;
+  *)           usage >&2; exit 2 ;;
+esac

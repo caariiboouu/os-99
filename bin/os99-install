@@ -16,7 +16,20 @@
 set -uo pipefail
 
 CHECK=false
-[[ ${1:-} == --check ]] && CHECK=true
+# Unknown arguments must not fall through to a real install. They used to: any
+# flag that was not --check simply left CHECK=false, so `os99-install --help`
+# quietly performed a full install -- copying plugins, rewriting hooks, and
+# registering bar widgets on a machine where somebody was only asking a question.
+case "${1:-}" in
+  "")        ;;
+  --check)   CHECK=true ;;
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \?//'; exit 0 ;;
+  *)
+    echo "os99-install: unknown option '$1'" >&2
+    echo "usage: os99-install [--check]" >&2
+    exit 2
+    ;;
+esac
 
 TOML="$HOME/.config/omarchy/os99-theme.toml"
 GEN="$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py"
@@ -209,49 +222,67 @@ for h in os99-bars-hook.sh os99-gtk.sh; do
   else bad "theme-set.d/$h missing  ->  omarchy hook install theme-set <path>/$h"; fi
 done
 
-# ------------------------------------------------------------- 5b. shell plugin
-head_ "Shell plugin (menu-bar font)"
-# The OS 9 menu bar font comes from a Quickshell bar widget that renders nothing
-# and only sets Style.fontFamily. Two separate things are needed: the plugin
-# directory, and an entry in shell.json's bar layout. The theme can carry the
-# first but not the second -- shell.json is the user's file.
-PLUGDIR="$HOME/.config/omarchy/plugins/j.os99-font"
+# ------------------------------------------------------------ 5b. shell plugins
+head_ "Shell plugins"
+# Two Quickshell bar widgets ship with OS 99: j.os99-font, which renders nothing
+# and only sets the menu-bar face, and j.os99-minimized, which lists windows the
+# title bar's collapse box has parked and puts them back.
+#
+# Each needs two separate things: the plugin directory, which the repo carries,
+# and an entry in shell.json's bar layout, which it cannot -- shell.json is the
+# user's file.
 SHELLJSON="$HOME/.config/omarchy/shell.json"
-if [[ -d $PLUGDIR ]]; then good "plugin directory present"; else bad "missing $PLUGDIR"; fi
 
-if [[ ! -f $SHELLJSON ]]; then
-  note "no shell.json; the menu bar will use the stock font"
-elif python3 -c "
+register_bar_widget() {
+  local id=$1 dir="$HOME/.config/omarchy/plugins/$1"
+
+  if [[ -d $dir ]]; then good "$id: present"; else bad "$id: missing $dir"; return; fi
+
+  if [[ ! -f $SHELLJSON ]]; then
+    note "$id: no shell.json, so nothing to register it in"
+    return
+  fi
+
+  if python3 -c "
 import json,sys
 d=json.load(open(sys.argv[1]))
 lay=d.get('bar',{}).get('layout',{})
-sys.exit(0 if any(w.get('id')=='j.os99-font' for sec in lay.values() for w in sec) else 1)
-" "$SHELLJSON" 2>/dev/null; then
-  good "registered in shell.json bar layout"
-elif $CHECK; then
-  bad "not registered in shell.json (--check: not modifying)"
-else
+sys.exit(0 if any(w.get('id')==sys.argv[2] for sec in lay.values() for w in sec) else 1)
+" "$SHELLJSON" "$id" 2>/dev/null; then
+    good "$id: registered in shell.json bar layout"
+    return
+  fi
+
+  if $CHECK; then
+    bad "$id: not registered in shell.json (--check: not modifying)"
+    return
+  fi
+
   # ALWAYS back up first. A previous session emptied this file and took seven
   # widgets with it; the layout is not reconstructible from anything else.
   cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"
-  if python3 - "$SHELLJSON" <<'PYEOF'
+  if python3 - "$SHELLJSON" "$id" <<'PYEOF'
 import json, sys
-path = sys.argv[1]
+path, wid = sys.argv[1], sys.argv[2]
 d = json.load(open(path))
 lay = d.setdefault("bar", {}).setdefault("layout", {})
 sec = lay.setdefault("right", [])
-# Front of the right section: it draws nothing, so position is cosmetic, but
-# keeping it first means it is not mistaken for a missing indicator later.
-sec.insert(0, {"id": "j.os99-font"})
+# Front of the right section. j.os99-font draws nothing so its position is
+# cosmetic; j.os99-minimized is only visible when something IS minimized, and
+# next to the font widget is as good a home as any.
+sec.insert(0, {"id": wid})
 # Match the file's own formatting exactly -- one-space indent, sorted keys, and
 # NO trailing newline -- so this shows up as a one-line diff rather than a
 # rewrite of the whole file.
 with open(path, "w") as fh:
     json.dump(d, fh, indent=1, sort_keys=True)
 PYEOF
-  then good "added j.os99-font to shell.json (backup written)"
-  else bad "could not edit shell.json -- add {\"id\": \"j.os99-font\"} to bar.layout yourself"; fi
-fi
+  then good "$id: added to shell.json (backup written)"
+  else bad "$id: could not edit shell.json -- add {\"id\": \"$id\"} to bar.layout yourself"; fi
+}
+
+register_bar_widget j.os99-font
+register_bar_widget j.os99-minimized
 
 # ------------------------------------------------------------------- 6. plugin
 head_ "hyprbars fork"

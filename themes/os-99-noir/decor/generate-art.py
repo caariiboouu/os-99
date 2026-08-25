@@ -794,9 +794,16 @@ if have_plugin then
   -- fullscreen, which hides the very title bar you would click to undo it.
   add("/bar_close.png",    "left",  "close")
   add("/bar_zoom.png",     "right", "maximize")
-  -- windowshade, the one action that cannot strand you: rolling the window up
-  -- leaves the title bar as the only thing on screen, so the same box undoes it.
-  add("/bar_collapse.png", "right", "shade")
+  -- Minimize: park the window on the os99-minimized workspace. Hyprland has no
+  -- minimize, and every in-place version of it hides the title bar you would
+  -- click to undo it. A parked window is never hidden from `hyprctl clients`,
+  -- so it is recoverable three ways: the bar widget, `os99-minimize restore`,
+  -- or simply switching to that workspace.
+  --
+  -- Windowshade still exists as hl.plugin.hyprbars.shade() for anyone who wants
+  -- to bind it. It is not on a box because floating a window to roll it up lets
+  -- Hyprland re-centre it, which can put the bar above the top of the screen.
+  add("/bar_collapse.png", "right", "minimize")
 end
 """)
 

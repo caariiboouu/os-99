@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "j.os99-minimized",
+  "name": "OS 9 minimized windows",
+  "version": "1.0.0",
+  "author": "j",
+  "description": "Lists windows parked by the title bar's collapse box, and puts them back.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "Minimized windows",
+    "description": "Shows how many windows are minimized; click to restore one",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

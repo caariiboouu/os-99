@@ -137,6 +137,27 @@ Hyprlang::CParseResult onNewButton(const char* K, const char* V) {
 //     hl.bind("SUPER + S", hl.dsp.exec_cmd("hyprctl eval 'hl.plugin.hyprbars.shade()'"))
 // The action lives on the bar rather than on the window because the bar is what
 // remembers the pre-shade size and position.
+// Minimize the focused window, exposed so it can be bound to a key as well as
+// reached through the collapse box:
+//     hl.bind("SUPER + M", hl.dsp.exec_cmd("hyprctl eval 'hl.plugin.hyprbars.minimize()'"))
+// Restoring is deliberately NOT here. A minimized window has no bar on screen
+// to click, so the way back has to be something that can see windows the user
+// cannot -- os99-minimize restore, or the bar widget that calls it.
+int luaMinimize(lua_State* L) {
+    const auto WINDOW = Desktop::focusState()->window();
+    if (!WINDOW)
+        return 0;
+
+    for (auto& b : g_pGlobalState->bars) {
+        if (b && b->getOwner() == WINDOW) {
+            b->minimizeWindow();
+            break;
+        }
+    }
+
+    return 0;
+}
+
 int luaShade(lua_State* L) {
     const auto WINDOW = Desktop::focusState()->window();
     if (!WINDOW)
@@ -371,6 +392,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "add_button", ::newLuaButton);
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "clear_buttons", ::clearLuaButtons);
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "shade", ::luaShade);
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "minimize", ::luaMinimize);
     static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
     static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
 

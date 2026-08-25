@@ -38,6 +38,7 @@ class CHyprBar : public IHyprWindowDecoration {
     void                               syncFrameRounding();
     void                               runNativeDispatch(const std::string& what);
     void                               toggleShade();
+    void                               minimizeWindow();
     void                               keepShadeOnScreen();
 
     virtual void                       damageEntire();

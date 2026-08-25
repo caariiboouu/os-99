@@ -4,6 +4,11 @@
 #include <hyprland/src/desktop/reserved/ReservedArea.hpp>
 #include "ninePatch.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <format>
+
 // Attempts allowed to nudge a shaded window's bar back on screen. See
 // keepShadeOnScreen(): this bound is what keeps it from becoming a move loop.
 static constexpr int SHADE_FIX_ATTEMPTS = 3;
@@ -515,8 +520,65 @@ void CHyprBar::runNativeDispatch(const std::string& what) {
         REPORT(pinWindow(TOGGLE_ACTION_TOGGLE, PWINDOW));
     else if (what == "shade")
         toggleShade();
+    else if (what == "minimize")
+        minimizeWindow();
     else
         Log::logger->log(Log::ERR, "[hyprbars] unknown button dispatch '{}'", what);
+}
+
+// MINIMIZE: park the window on a workspace the user is not looking at.
+//
+// Hyprland has no minimize, and every in-place approximation fails the same
+// way -- whatever shrinks or hides a window also hides the title bar you would
+// click to undo it. Moving the window elsewhere sidesteps that: it keeps its
+// size and its process, it is simply not on screen.
+//
+// The park is a REGULAR named workspace, not a special one. Windows on a hidden
+// special workspace vanish from `hyprctl clients` AND from hl.get_windows(), so
+// nothing can enumerate them and a window becomes unreachable if the bar widget
+// fails to load. On a non-visible regular workspace they stay fully listed, and
+// the workspace itself is a visible escape hatch.
+//
+// This goes out as a Lua dispatch rather than Config::Actions::moveToWorkspace
+// because that overload wants a PHLWORKSPACE, and obtaining one means finding
+// or CREATING a workspace by hand through the state tracker. Hyprland already
+// does that correctly behind its own dispatcher; hand-rolling workspace
+// creation inside a plugin is how you get a half-registered workspace.
+void CHyprBar::minimizeWindow() {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return;
+
+    // Interpolated into a Lua string literal below, so it must not be able to
+    // close that literal -- and the same charset is what Hyprland accepts as a
+    // workspace name. A bad value falls back rather than failing: a button that
+    // silently does nothing is worse than one that parks it somewhere known.
+    static const std::string WORKSPACE = [] {
+        const char* const ENV  = std::getenv("OS99_MINIMIZE_WS");
+        const std::string NAME = ENV ? ENV : "";
+        const bool        OK   = !NAME.empty() && std::all_of(NAME.begin(), NAME.end(), [](unsigned char ch) { return std::isalnum(ch) || ch == '-' || ch == '_'; });
+        return OK ? NAME : std::string{"os99-minimized"};
+    }();
+
+    // Three things here were established by testing, not by documentation:
+    //
+    //   * hl.get_window("0x...") returns NIL for an address string, and a nil
+    //     window key makes the dispatcher fall back to the FOCUSED window. The
+    //     bar you clicked would then minimise somebody else, with no error.
+    //     Matching .address across hl.get_windows() is the form that resolves.
+    //   * a named workspace is "name:foo"; a bare "foo" is an Invalid workspace.
+    //   * follow = false is what keeps the current workspace from switching.
+    //     `silent` is ignored, despite being the old dispatcher's word for it.
+    //
+    // no_op keeps hl.dispatch happy if the window closed first.
+    const auto LUA = std::format("(function() for _, w in ipairs(hl.get_windows()) do if w.address == \"0x{:x}\" then "
+                                 "return hl.dsp.window.move({{ window = w, workspace = \"name:{}\", follow = false }}) end end "
+                                 "return hl.dsp.no_op() end)()",
+                                 (uintptr_t)PWINDOW.get(), WORKSPACE);
+
+    const auto REPLY = HyprlandAPI::invokeHyprctlCommand("dispatch", LUA);
+    if (REPLY != "ok")
+        Log::logger->log(Log::ERR, "[hyprbars] minimize failed: {}", REPLY);
 }
 
 // WINDOWSHADE: roll the window up into just its title bar, and back down again.
