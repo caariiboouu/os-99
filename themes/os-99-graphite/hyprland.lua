@@ -29,8 +29,11 @@ hl.config({
 
     -- Grouped windows read as Platinum tab strips.
     groupbar = {
-      -- Charcoal, the OS 9 system font, same as the title bars and the menu bar.
-      font_family = "Charcoal",
+      -- The same face as the title bars and the menu bar. This is only the
+      -- startup value: os99-window-bars overwrites it with whichever face the
+      -- font chain actually resolved, so a machine without ChicagoFLF still
+      -- gets a matching groupbar rather than a fontconfig substitution.
+      font_family = "ChicagoFLF",
       font_size = 12,
       font_weight_active = "bold",
       font_weight_inactive = "normal",

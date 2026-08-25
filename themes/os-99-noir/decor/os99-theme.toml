@@ -99,7 +99,7 @@ clear_pad = 7         # plain face padding around each box, clearing the hatch
 
 [text]
 size      = 12        # title point size
-font      = "Charcoal"   # OS 9 shipped Charcoal; Chicago was System 7
+font      = "ChicagoFLF"   # public domain; metrically a drop-in for Charcoal (same ascent and baseline, 7% wider)
 clear_pad = 8        # plain face padding either side of the title, clearing the hatch
 
 # ---------------------------------------------------------------------------
