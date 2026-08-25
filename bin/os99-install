@@ -85,7 +85,14 @@ else
     for t in "$REPO"/themes/*; do cp -r "$t" "$HOME/.config/omarchy/themes/"; done
     good "themes -> ~/.config/omarchy/themes ($(ls -1 "$REPO"/themes | wc -l) of them)"
     install -d "$HOME/.config/omarchy/plugins"
-    cp -r "$REPO"/shell-plugin/* "$HOME/.config/omarchy/plugins/" 2>/dev/null && good "shell plugin -> ~/.config/omarchy/plugins"
+    cp -r "$REPO"/shell-plugin/* "$HOME/.config/omarchy/plugins/" 2>/dev/null && good "shell plugins -> ~/.config/omarchy/plugins"
+    # j.osd is a one-line fork of Omarchy's OSD. It has to be ENABLED, not just
+    # copied, because enabling is what switches the shell off omarchy.osd. See
+    # shell-plugin/j.osd/WHY.md for what it changes and why theme data cannot.
+    if [[ -d $REPO/shell-plugin/j.osd ]] && command -v omarchy-plugin-enable >/dev/null 2>&1; then
+      omarchy-plugin-enable j.osd >/dev/null 2>&1 && good "j.osd enabled (fixes OSD toast contrast)" \
+        || note "could not enable j.osd -- run: omarchy plugin enable j.osd"
+    fi
   else
     note "no Omarchy -- themes not copied; generate art with --out instead (see README)"
   fi

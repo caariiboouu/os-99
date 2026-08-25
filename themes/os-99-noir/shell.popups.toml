@@ -1,17 +1,16 @@
 [popups]
-# Noir is light chrome over dark content, and popup surfaces sit on the content
-# side of that line -- so this pair is dark while shell.bar.toml stays light.
+# Light, matching Noir's light chrome -- the bar, its tray menus and every
+# Ui/Dropdown sit on this surface and draw the BAR's black text on it.
 #
-# It also has to be dark for a reason that is not aesthetic. Omarchy's OSD (the
-# toast at the bottom of the screen) draws Color.popups.text on Color.background
-# from colors.toml, not on popups.background -- two independent sources that only
-# line up by luck. Noir's colors.toml background is #2B2B2B, so black popup text
-# gave 1.48:1 there, unreadable. Light text fixes the OSD, and the background
-# must follow it or every Ui/Dropdown, MultiSelect and SearchableDropdown -- all
-# of which DO pair popups.text with popups.background -- would break instead.
-background       = "#4A4A4A"
+# This can only be light because the OSD no longer reads colors.toml. Omarchy's
+# stock OSD draws Color.popups.text on Color.background, which in Noir is the
+# dark #2B2B2B content colour; that made black popup text 1.48:1 and could not
+# be fixed here, because popups.text also has to stay dark for the dropdowns.
+# The j.osd plugin clone repoints the OSD at popups.background, which removes
+# the conflict and lets all three surfaces agree. See shell-plugin/j.osd.
+background       = "#DDDDDD"
 background-alpha = 1.0
-text             = "#ECECEC"
+text             = "#000000"
 border           = "#000000"
 border-alpha     = 1.0
 border-width     = 1
