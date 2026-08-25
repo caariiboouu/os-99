@@ -67,12 +67,60 @@ for k in "$HOME/.config/omarchy/os99-no-bars" "${XDG_CONFIG_HOME:-$HOME/.config}
 done
 [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR}/hypr" 2>/dev/null | head -1)
 
+# Unload whatever hyprbars the compositor ACTUALLY has open, not the one we most
+# recently built.
+#
+# The pointer file names the newest build. That is not necessarily what is
+# loaded: rebuilding writes a new content-hashed .so and moves the pointer,
+# while the running Hyprland keeps the handle it dlopened at load time. Unload
+# takes the path a plugin was loaded FROM, so unloading by the pointer path
+# quietly does nothing once those two have diverged -- and the failure went to
+# /dev/null. That is how OS 9 title bars survived a switch to another theme.
+#
+# The hashed-path scheme is still right for loading (Hyprland does not fully
+# dlclose, so a reused path returns stale code); it just cannot be trusted to
+# say what is resident. Ask the kernel instead.
+# Every libhyprbars any running Hyprland has open.
+#
+# The pid cannot be tied to a particular instance: Hyprland exports
+# HYPRLAND_INSTANCE_SIGNATURE to its CHILDREN but does not carry it in its own
+# environ, so there is nothing in /proc to match against. That is fine here.
+# The paths are only used as candidates -- the unload itself goes through
+# hyprctl, which already talks to the instance named by the signature, and
+# unloading a path that instance does not have resident is a harmless no-op.
+hyprbars_paths() {
+  local p
+  for p in $(pgrep -x Hyprland 2>/dev/null); do
+    grep -ho '/[^ ]*libhyprbars[^ ]*\.so' "/proc/$p/maps" 2>/dev/null
+  done | sort -u
+}
+
+unload_hyprbars() {
+  local p found=0
+
+  while read -r p; do
+    [[ -n $p ]] || continue
+    hyprctl plugin unload "$p" >/dev/null 2>&1 && found=1
+  done < <(hyprbars_paths)
+
+  # Fallback: no readable maps anywhere. Try every build ever installed. One of
+  # them is the right answer and the rest are no-ops.
+  if (( ! found )); then
+    for p in "$SO" "$HOME"/.local/lib/libhyprbars-os99-*.so; do
+      [[ -f $p ]] && hyprctl plugin unload "$p" >/dev/null 2>&1
+    done
+  fi
+
+  [[ -n $STOCK ]] && hyprctl plugin unload "$STOCK" >/dev/null 2>&1
+  return 0
+}
+
 # Switching AWAY from an OS 99 theme has to hand the frame back to the defaults.
 # That is an Omarchy-only concern: standalone there is nothing to switch to, and
 # a missing art directory just means "not installed" -- in which case leave the
 # compositor entirely alone rather than imposing someone else's border colours.
 if (( HAVE_OMARCHY )) && [[ $LAYOUT != explicit && ! -f "$OMARCHY_THEME/os99.marker" ]]; then
-  hyprctl plugin list 2>/dev/null | grep -q hyprbars && { hyprctl plugin unload "$SO" >/dev/null 2>&1; [[ -n $STOCK ]] && hyprctl plugin unload "$STOCK" >/dev/null 2>&1; }
+  hyprctl plugin list 2>/dev/null | grep -q hyprbars && unload_hyprbars
   hyprctl eval 'hl.config({
     general = { border_size = 2, col = {
       active_border = { colors = { "rgba(33ccffee)", "rgba(00ff99ee)" }, angle = 45 },
