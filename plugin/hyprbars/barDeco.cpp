@@ -1,7 +1,12 @@
 #include "barDeco.hpp"
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/desktop/reserved/ReservedArea.hpp>
 #include "ninePatch.hpp"
+
+// Attempts allowed to nudge a shaded window's bar back on screen. See
+// keepShadeOnScreen(): this bound is what keeps it from becoming a move loop.
+static constexpr int SHADE_FIX_ATTEMPTS = 3;
 
 #include <sys/stat.h>
 
@@ -262,6 +267,9 @@ void CHyprBar::onPositioningReply(const SDecorationPositioningReply& reply) {
         m_bWindowSizeChanged = true;
 
     m_bAssignedBox = reply.assignedGeometry;
+
+    // First point at which a freshly shaded window's settled position is legible.
+    keepShadeOnScreen();
 }
 
 std::string CHyprBar::getDisplayName() {
@@ -562,12 +570,8 @@ void CHyprBar::toggleShade() {
         // moving first has the position quietly undone a moment later.
         REPORT("resize", resize(Vector2D{m_shadeRestoreSize.x, 1.0}, false, PWINDOW));
 
-        // Keeping it on screen cannot be done here. Hyprland re-centres the
-        // floating window AFTER this returns, so a move issued now -- absolute
-        // or relative -- is either overwritten or skipped because the position
-        // still reads as the old one. It is enforced in keepShadeOnScreen(),
-        // called from updateWindow(), once the layout has actually settled.
-        m_bShaded = true;
+        m_bShaded        = true;
+        m_shadeFixTries  = 0;
     } else {
         REPORT("resize", resize(m_shadeRestoreSize, false, PWINDOW));
         REPORT("move", move(m_shadeRestorePos, false, PWINDOW));
@@ -1117,32 +1121,57 @@ eDecorationType CHyprBar::getDecorationType() {
     return DECORATION_CUSTOM;
 }
 
-// A shaded window must keep its title bar on screen, because that bar is the
-// only way to unshade it. The frame reserves bar_height ABOVE the window box, so
-// any y below bar_height puts some or all of the bar past the top edge -- and
-// floating a window is exactly what Hyprland does to it, landing a wide window
-// at a negative y.
+// Put a shaded window back where it was, and never below the top of the screen.
 //
-// This runs from updateWindow rather than from toggleShade because the re-centre
-// happens after toggleShade returns: reading the position there still gives the
-// pre-resize value, so the correction is skipped and then undone. Here the
-// layout has settled. The move is relative -- a delta needs no agreement about
-// what the coordinate means -- and only ever downward, so it cannot oscillate.
+// Shading floats the window, and Hyprland re-centres a window when it is
+// floated: a 2016-wide window lands at y = -2, with its 28px title bar entirely
+// off the top of the screen. The bar is the only part of a shaded window left
+// to click, so it has to clear the reserved area.
+//
+// The correction cannot be made in toggleShade, because the re-centre happens
+// after toggleShade returns -- a move issued there reads a stale position and is
+// overwritten. So it is retried from the layout events that follow.
+//
+// The retry budget is the important part. An earlier version retried until the
+// window converged, which is only safe if it ever does: when the move does not
+// take, each attempt damages the window, the damage drives another event, and
+// the next attempt re-issues the move. That is a per-frame move loop, and it
+// pins the window hard enough that hyprctl dispatches report ok and do nothing.
+// A small fixed budget cannot loop, and the worst case is the pre-existing
+// behaviour of the bar sitting too high -- visible, but not a trap.
 void CHyprBar::keepShadeOnScreen() {
-    if (!m_bShaded)
+    if (!m_bShaded || m_shadeFixTries >= SHADE_FIX_ATTEMPTS)
         return;
 
     const auto PWINDOW = m_pWindow.lock();
     if (!PWINDOW || !PWINDOW->m_isFloating)
-        return;
+        return; // still settling; does not count against the budget
 
     const auto HEIGHT = g_pGlobalState->config.barHeight->value();
     const auto POS    = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
-    if (POS.y >= HEIGHT)
-        return;
 
-    if (!Config::Actions::move(Vector2D{0.0, (double)HEIGHT - POS.y}, true, PWINDOW))
-        Log::logger->log(Log::ERR, "[hyprbars] shade: could not keep the bar on screen");
+    Vector2D want = m_shadeRestorePos;
+
+    // Clamping to bar_height alone is not enough: that measures from the top of
+    // the OUTPUT, so it parks the frame at y = 0 -- underneath the status bar.
+    // The floor is the reserved area's top edge, which is where windows are
+    // allowed to start, plus the bar the frame reserves ABOVE the window box.
+    double floorY = HEIGHT;
+    if (const auto PMONITOR = PWINDOW->m_monitor.lock())
+        floorY = PMONITOR->m_position.y + PMONITOR->m_reservedArea.top() + HEIGHT;
+
+    if (want.y < floorY)
+        want.y = floorY;
+
+    const Vector2D DELTA = want - POS;
+    if (DELTA.x > -1.0 && DELTA.x < 1.0 && DELTA.y > -1.0 && DELTA.y < 1.0) {
+        m_shadeFixTries = SHADE_FIX_ATTEMPTS; // where it belongs -- stop watching
+        return;
+    }
+
+    ++m_shadeFixTries;
+    if (!Config::Actions::move(DELTA, true, PWINDOW))
+        Log::logger->log(Log::ERR, "[hyprbars] shade: could not restore the bar's position");
 }
 
 void CHyprBar::updateWindow(PHLWINDOW pWindow) {

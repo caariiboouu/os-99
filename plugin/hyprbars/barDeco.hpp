@@ -79,6 +79,7 @@ class CHyprBar : public IHyprWindowDecoration {
     // dispatcher, so it is built here out of float + resize, remembering enough
     // to put the window back exactly as it was.
     bool                       m_bShaded            = false;
+    int                        m_shadeFixTries      = 0;
     bool                       m_bShadeWasTiled     = false;
     Vector2D                   m_shadeRestoreSize;
     Vector2D                   m_shadeRestorePos;
