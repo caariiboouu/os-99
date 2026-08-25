@@ -1,7 +1,17 @@
 [popups]
-background       = "#DDDDDD"
+# Noir is light chrome over dark content, and popup surfaces sit on the content
+# side of that line -- so this pair is dark while shell.bar.toml stays light.
+#
+# It also has to be dark for a reason that is not aesthetic. Omarchy's OSD (the
+# toast at the bottom of the screen) draws Color.popups.text on Color.background
+# from colors.toml, not on popups.background -- two independent sources that only
+# line up by luck. Noir's colors.toml background is #2B2B2B, so black popup text
+# gave 1.48:1 there, unreadable. Light text fixes the OSD, and the background
+# must follow it or every Ui/Dropdown, MultiSelect and SearchableDropdown -- all
+# of which DO pair popups.text with popups.background -- would break instead.
+background       = "#4A4A4A"
 background-alpha = 1.0
-text             = "#000000"
+text             = "#ECECEC"
 border           = "#000000"
 border-alpha     = 1.0
 border-width     = 1
