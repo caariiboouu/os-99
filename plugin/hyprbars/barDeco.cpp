@@ -1028,41 +1028,28 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
         onButtonHoverChanged(nowHovered);
 }
 
-// The cursor came to rest somewhere new. Any tooltip that is up belongs to the
-// box it has left, so it goes immediately; the new one is owed the full delay.
+// The cursor came to rest somewhere new.
+//
+// NO TIMER. There was one, to hold the tooltip back for a moment the way a
+// desktop tooltip does, and it took the session down TWICE from inside its
+// callback -- Hyprland runs those straight off the Wayland event loop, where
+// anything thrown is std::terminate, and a try/catch around the body did not
+// contain it either. A delay is not worth a crash, and OS 9's own Balloon Help
+// appeared the instant you pointed at something anyway.
+//
+// So the tooltip is decided here, in the render path that already tracks
+// hover, and drawn in the same pass. Nothing is scheduled and nothing is
+// called back.
 void CHyprBar::onButtonHoverChanged(int index) {
     m_hoveredButton = index;
-
-    if (m_tooltipShown) {
-        m_tooltipShown = false;
-        damageEntire();
-    }
-
-    const auto TIMER = g_pGlobalState->tooltipTimer;
-    if (!TIMER)
-        return;
 
     const bool WANT = index >= 0 && index < (int)g_pGlobalState->buttons.size() && g_pGlobalState->config.barTooltips->value() &&
         !g_pGlobalState->buttons[index].tooltip.empty();
 
-    if (!WANT) {
-        // Only disarm a countdown that is OURS. Another bar may have armed it
-        // since, and cancelling that one would silently eat its tooltip.
-        if (g_pGlobalState->tooltipBar == m_self)
-            TIMER->updateTimeout(std::nullopt);
-        return;
+    if (m_tooltipShown != WANT) {
+        m_tooltipShown = WANT;
+        damageEntire();
     }
-
-    g_pGlobalState->tooltipBar = m_self;
-    TIMER->updateTimeout(std::chrono::milliseconds(std::max(0, (int)g_pGlobalState->config.barTooltipDelay->value())));
-}
-
-void CHyprBar::showTooltip() {
-    if (barsShuttingDown() || m_hoveredButton < 0)
-        return;
-
-    m_tooltipShown = true;
-    damageEntire();
 }
 
 void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
@@ -1555,6 +1542,16 @@ void CHyprBar::damageEntire() {
 // text) -- everything earlier is clipped to the frame, and a tooltip has to
 // hang below it.
 void CHyprBar::renderTooltip(PHLMONITOR pMonitor, const float a) {
+    // Belt and braces: this runs inside the render pass, where an escaping
+    // exception is std::terminate and the session is gone. Everything it
+    // touches -- config values, text rendering, textures -- is something that
+    // has thrown here before.
+    try {
+        renderTooltipInner(pMonitor, a);
+    } catch (...) { /* a tooltip is never worth the session */ }
+}
+
+void CHyprBar::renderTooltipInner(PHLMONITOR pMonitor, const float a) {
     if (!m_tooltipShown || m_hoveredButton < 0 || m_hoveredButton >= (int)g_pGlobalState->buttons.size())
         return;
 

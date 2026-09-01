@@ -7,7 +7,6 @@
 #include <hyprland/src/config/values/types/StringValue.hpp>
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/FontWeightValue.hpp>
-#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -81,13 +80,6 @@ struct SGlobalState {
     bool                      shuttingDown = false;
     std::vector<SHyprButton>  buttons;
     std::vector<WP<CHyprBar>> bars;
-
-    // ONE tooltip timer for the whole plugin. Only one box can be under the
-    // cursor at a time, so a timer per bar would be one idle timer per window
-    // for a single possible tooltip -- and one more thing to cancel on unload,
-    // where a timer that outlives the .so calls into unmapped code.
-    SP<CEventLoopTimer>       tooltipTimer;
-    WP<CHyprBar>              tooltipBar;
     uint32_t                  nobarRuleIdx      = 0;
     uint32_t                  barColorRuleIdx   = 0;
     uint32_t                  titleColorRuleIdx = 0;
@@ -100,7 +92,6 @@ struct SGlobalState {
         SP<Config::Values::CIntValue>        barPadding;
         SP<Config::Values::CIntValue>        barButtonPadding;
         SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, barTooltips;
-        SP<Config::Values::CIntValue>        barTooltipDelay;
         SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, barMenuCommand;
         SP<Config::Values::CStringValue>     barTexture, barTextureBorder;
         SP<Config::Values::CStringValue>     frameTexture, frameTextureBorder, frameInset;

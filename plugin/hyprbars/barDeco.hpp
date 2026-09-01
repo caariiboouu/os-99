@@ -57,11 +57,6 @@ class CHyprBar : public IHyprWindowDecoration {
     void                               updateRules();
     void                               onConfigReloaded();
 
-    // Called by the shared hover timer once the cursor has rested on a box
-    // long enough. Public because that timer lives in main.cpp, not in a
-    // friend of this class.
-    void                               showTooltip();
-
     WP<CHyprBar>                       m_self;
 
   private:
@@ -98,9 +93,8 @@ class CHyprBar : public IHyprWindowDecoration {
 
     Time::steady_tp            m_lastMouseDown = Time::steadyNow();
 
-    // TOOLTIPS. Which box the cursor is resting on -- an index into
-    // g_pGlobalState->buttons, or -1 for none -- and whether the delay has
-    // elapsed and it is actually on screen.
+    // TOOLTIPS. Which box the cursor is on -- an index into
+    // g_pGlobalState->buttons, or -1 for none -- and whether one is up.
     //
     // The rendered text is cached on the bar rather than on the button because
     // only one tooltip can be up at a time, and its content depends on state
@@ -129,10 +123,10 @@ class CHyprBar : public IHyprWindowDecoration {
     void renderBarButtons(CBox* barBox, const float scale, const float a);
     void renderBarButtonsText(CBox* barBox, const float scale, const float a);
     void renderTooltip(PHLMONITOR pMonitor, const float a);
+    void renderTooltipInner(PHLMONITOR pMonitor, const float a);
     void damageOnButtonHover();
 
-    // Hover moved to another box (or off every box): restart the delay, and
-    // take down any tooltip that is up.
+    // Hover moved to another box, or off every box.
     void onButtonHoverChanged(int index);
     // Whether the window is currently IN the state this box toggles, read live
     // from the window so a change made by any other route still shows here.
