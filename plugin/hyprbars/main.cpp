@@ -10,6 +10,7 @@
 #include <hyprland/src/config/shared/parserUtils/ParserUtils.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleEffectContainer.hpp>
 #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
 #include <hyprland/src/config/lua/types/LuaConfigColor.hpp>
@@ -271,6 +272,27 @@ int newLuaButton(lua_State* L) {
             button.dispatch = lua_tostring(L, -1);
     }
 
+    {
+        Hyprutils::Utils::CScopeGuard x([L] { lua_pop(L, 1); });
+        lua_getfield(L, 1, "tooltip");
+        if (lua_isstring(L, -1))
+            button.tooltip = lua_tostring(L, -1);
+    }
+
+    {
+        Hyprutils::Utils::CScopeGuard x([L] { lua_pop(L, 1); });
+        lua_getfield(L, 1, "tooltip_active");
+        if (lua_isstring(L, -1))
+            button.tooltipActive = lua_tostring(L, -1);
+    }
+
+    {
+        Hyprutils::Utils::CScopeGuard x([L] { lua_pop(L, 1); });
+        lua_getfield(L, 1, "active_when");
+        if (lua_isstring(L, -1))
+            button.activeWhen = lua_tostring(L, -1);
+    }
+
     if (button.cmd.empty() && button.dispatch.empty())
         return Config::Lua::Bindings::Internal::configError(L, "add_button: needs either action (a shell command) or dispatch (a native dispatcher name)");
 
@@ -363,6 +385,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     // an unknown key, breaking theme application until the next login.
     g_pGlobalState->config.barMenuCommand      = makeShared<Config::Values::CStringValue>(
         "plugin:hyprbars:bar_menu_command", "Command spawned on right-click of bar face (not a button). The clicked window's address is appended. Empty runs ~/.local/bin/os99-bar-menu", "");
+    g_pGlobalState->config.barTooltips         = makeShared<Config::Values::CBoolValue>(
+        "plugin:hyprbars:bar_tooltips", "Whether resting on a title-bar button names what it does", true);
+    g_pGlobalState->config.barTooltipDelay     = makeShared<Config::Values::CIntValue>(
+        "plugin:hyprbars:bar_tooltip_delay", "How long the cursor must rest on a button before its tooltip appears, in ms", 550);
 
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barColor);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.textColor);
@@ -397,6 +423,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.iconOnHover);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.onDoubleClick);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barMenuCommand);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTooltips);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTooltipDelay);
 
     if (Config::mgr()->type() == Config::CONFIG_LEGACY)
         HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});
@@ -407,6 +435,42 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "minimize", ::luaMinimize);
     static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
     static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
+
+    // THE TOOLTIP DELAY, as one timer for the whole plugin.
+    //
+    // It cannot be done by watching mouse movement: the moment a tooltip is
+    // owed is the moment the cursor STOPS, and a still cursor emits no events,
+    // so the delay would only ever elapse for someone who keeps jiggling the
+    // mouse. Hence a real timer, armed when the cursor comes to rest on a box
+    // and cancelled the instant it leaves -- an idle session holds none.
+    //
+    // It MUST be handed back in PLUGIN_EXIT. The callback lives in this shared
+    // object, so a timer that outlives the .so fires into unmapped memory:
+    // exactly the crash that leaving decorations behind used to cause, with
+    // the same unhelpful backtrace into an address belonging to no object.
+    g_pGlobalState->tooltipTimer = makeShared<CEventLoopTimer>(
+        std::nullopt,
+        [](SP<CEventLoopTimer> self, void*) {
+            // NOTHING may escape this callback. Hyprland calls it straight
+            // from the Wayland event loop with no handler above it, so an
+            // exception here is not an error, it is std::terminate -- and
+            // that is a SIGABRT that takes the whole session down and brings
+            // it back in safe mode with every client dead. It cost exactly
+            // that on 2026-09-01, thrown from a log call inside the tooltip
+            // it was trying to show.
+            //
+            // A tooltip is the least important thing on screen. If showing it
+            // fails, it must fail as a tooltip that did not appear.
+            try {
+                if (barsShuttingDown())
+                    return;
+
+                if (const auto BAR = g_pGlobalState->tooltipBar.lock())
+                    BAR->showTooltip();
+            } catch (...) { /* a tooltip is never worth the session */ }
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(g_pGlobalState->tooltipTimer);
 
     // add deco to existing windows
     for (auto& w : Desktop::windowState()->windows()) {
@@ -428,6 +492,15 @@ APICALL EXPORT void PLUGIN_EXIT() {
     // DECORATIONS survive it and simply queue a fresh element on the next frame.
     if (g_pGlobalState)
         g_pGlobalState->shuttingDown = true;
+
+    // Before anything else: a pending tooltip timer would fire into code that
+    // is about to be unmapped. cancel() stops it going off, removeTimer takes
+    // Hyprland's reference back, and the reset drops ours.
+    if (g_pGlobalState && g_pGlobalState->tooltipTimer) {
+        g_pGlobalState->tooltipTimer->cancel();
+        g_pEventLoopManager->removeTimer(g_pGlobalState->tooltipTimer);
+        g_pGlobalState->tooltipTimer.reset();
+    }
 
     for (auto& m : State::monitorState()->monitors())
         m->m_scheduledRecalc = true;

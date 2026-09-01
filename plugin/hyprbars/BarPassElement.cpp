@@ -34,7 +34,18 @@ std::optional<CBox> CBarPassElement::boundingBox() {
     // frameBoxGlobal() is the bar strip unless a frame is configured, in which
     // case it is the whole ring -- which must be inside the bb or the sides and
     // bottom get occluded away.
-    return data.deco->frameBoxGlobal().translate(-g_pHyprRenderer->m_renderData.pMonitor->m_position).expand(10);
+    auto       box     = data.deco->frameBoxGlobal();
+    const auto TOOLTIP = data.deco->tooltipBoxGlobal();
+
+    // A tooltip hangs below the frame, so it has to be inside the bb or it is
+    // occluded away and never appears.
+    if (TOOLTIP.w > 0 && TOOLTIP.h > 0) {
+        const double X0 = std::min(box.x, TOOLTIP.x), Y0 = std::min(box.y, TOOLTIP.y);
+        const double X1 = std::max(box.x + box.w, TOOLTIP.x + TOOLTIP.w), Y1 = std::max(box.y + box.h, TOOLTIP.y + TOOLTIP.h);
+        box = CBox{X0, Y0, X1 - X0, Y1 - Y0};
+    }
+
+    return box.translate(-g_pHyprRenderer->m_renderData.pMonitor->m_position).expand(10);
 }
 
 bool CBarPassElement::needsPrecomputeBlur() {

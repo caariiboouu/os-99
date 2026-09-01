@@ -117,16 +117,28 @@ The close box is on the left; zoom and collapse are on the right, as they were.
 That is the default, not the limit — eight boxes exist, and which ones a bar
 carries is yours to choose:
 
-| box | glyph | does |
-|---|---|---|
-| `close` | plain box | close the window |
-| `zoom` | square off the top-left corner | expand, keeping the title bar |
-| `collapse` | two slats | minimize to the bar widget |
-| `shade` | one slat | roll up to just the title bar |
-| `float` | two overlapping windows | toggle floating |
-| `pin` | solid square | pin a floating window |
-| `full` | full-interior outline | true fullscreen — hides the bar; opt-in for a reason |
-| `kill` | the X | force quit; also opt-in for a reason |
+| box | glyph | does | latches |
+|---|---|---|---|
+| `close` | plain box | close the window | |
+| `kill` | the X | force quit — sits beside close, the two ways to end a window | |
+| `zoom` | square off the top-left corner | expand, keeping the title bar | ✓ |
+| `collapse` | bar along the bottom | minimize to the bar widget | |
+| `shade` | two slats | roll up to just the title bar | ✓ |
+| `float` | two overlapping windows | toggle floating | ✓ |
+| `pin` | solid square | pin a floating window | ✓ |
+| `full` | four corner brackets | true fullscreen — hides the bar; opt-in for a reason | ✓ |
+
+Rest on a box and it names what it does. A box that **latches** is drawn held
+down while the window is already in that state, and then its tooltip names the
+way back out rather than repeating the way in — "Return it to the tiling", not
+"Float this window". The state is read off the window every frame, so a change
+made by a keybind or by the window itself shows up on the box too. Tooltips are
+`plugin:hyprbars:bar_tooltips` and `bar_tooltip_delay` (ms) if you want them
+gone or slower.
+
+The two slats are the traced OS 9 windowshade box, so they sit on `shade`, the
+box that actually rolls a window up. Minimize is not an OS 9 idea and gets its
+own mark instead of borrowing that one.
 
 **Right-click anywhere on the bar that is not a box** and an OS 9 menu opens
 with the full list — click to toggle, checkmarks show what is on (Omarchy

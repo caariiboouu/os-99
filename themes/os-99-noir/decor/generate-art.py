@@ -557,6 +557,33 @@ DISPATCH = {
     "kill":     "kill",         # force quit; also opt-in only
 }
 
+# What a box says when you rest on it, and what it says while it is LATCHED --
+# because a box that toggles has to name the way back, not repeat the way in.
+# Boxes with no second string do not latch: closing and force-quitting are not
+# states a window can sit in, and a minimized window has no bar to hover.
+TOOLTIP = {
+    "close":    ("Close",                      ""),
+    "zoom":     ("Zoom - fill the screen",     "Zoom - put it back"),
+    "collapse": ("Minimize to the bar",        ""),
+    "shade":    ("Roll up to the title bar",   "Roll back down"),
+    "float":    ("Float this window",          "Return it to the tiling"),
+    "pin":      ("Pin above other windows",    "Unpin"),
+    "full":     ("Fullscreen - hides this bar", "Leave fullscreen"),
+    "kill":     ("Force quit",                 ""),
+}
+
+# The window state that latches each box, drawn with its pressed art and
+# described by the second tooltip. Read live from the window, never stored, so
+# a change made any other way -- a keybind, another box, the window itself --
+# is reflected without anything having to be told about it.
+ACTIVE_WHEN = {
+    "zoom":  "maximized",
+    "shade": "shaded",
+    "float": "floating",
+    "pin":   "pinned",
+    "full":  "fullscreen",
+}
+
 # Which boxes this machine shows, corner-first per side (buttons fill outward
 # from their own edge in the plugin). The defaults are the OS 9 trio.
 BTN_LEFT  = list(_btn.get("left",  ["close"]))
@@ -571,8 +598,16 @@ for _side, _lst in (("left", BTN_LEFT), ("right", BTN_RIGHT)):
         _seen.add(_g)
 
 # The add() lines bars.lua carries -- built once, palette-independent.
+# A tooltip reaches the compositor as a Lua string literal, so it is held to
+# plain text here for the same reason the colours are: this file is executed.
+for _g, (_t, _ta) in TOOLTIP.items():
+    for _s in (_t, _ta):
+        if any(c in _s for c in '"\\\n\r'):
+            _bad(f"TOOLTIP[{_g}]", _s, "contains a quote, backslash or newline")
+
 BTN_LUA = "\n".join(
-    f'  add("/bar_{_g}.png", "{_side}", "{DISPATCH[_g]}")'
+    f'  add("/bar_{_g}.png", "{_side}", "{DISPATCH[_g]}",\n'
+    f'      "{TOOLTIP[_g][0]}", "{TOOLTIP[_g][1]}", "{ACTIVE_WHEN.get(_g, "")}")'
     for _side, _lst in (("left", BTN_LEFT), ("right", BTN_RIGHT))
     for _g in _lst) or "  -- no boxes configured; os99-buttons or the menu can add them back"
 
@@ -656,18 +691,28 @@ def box(kind, pressed, S=13):
             p[(q, y)] = OUTLINE
         for x in range(2, q + 1):
             p[(x, q)] = OUTLINE
-    elif kind == "collapse":
-        # Windowshade slats: TWO rules, and they run the full inner width right
-        # into the outline rather than floating inside a margin.
+    elif kind == "shade":
+        # THE traced OS 9 windowshade box: two slats running the full inner
+        # width into the outline rather than floating inside a margin.
+        #
+        # It sits on `shade` because `shade` is the action it depicts. It used
+        # to sit on `collapse`, i.e. on minimize, which left the real
+        # windowshade with an invented one-slat mark -- and one slat against
+        # two is not a different icon at 18 device pixels, it is the same icon
+        # miscounted.
         for m in (round(S * 0.43), round(S * 0.57)):
             for x in range(1, S - 1):
                 p[(x, m)] = OUTLINE
-    elif kind == "shade":
-        # ONE full-width rule: the bar a window rolls up into. One slat where
-        # collapse has two, so the pair stay tellable apart at bar size.
-        m = round(S * 0.5)
-        for x in range(1, S - 1):
-            p[(x, m)] = OUTLINE
+    elif kind == "collapse":
+        # Minimize is not an OS 9 idea -- there was nowhere to minimize TO --
+        # so it gets a plainly-read mark rather than a traced one: a solid bar
+        # along the BOTTOM of the interior, the window shrunk to a strip.
+        # Nothing else in the set touches the bottom edge, so it cannot be
+        # taken for the windowshade slats.
+        h_ = max(2, round(d * 0.22))
+        for y in range(i1 - h_ + 1, i1 + 1):
+            for x in range(i0, i1 + 1):
+                p[(x, y)] = OUTLINE
     elif kind == "float":
         # Two overlapping window outlines, the front one occluding the back --
         # a window lifted OUT of the tiling. The front interior is repainted
@@ -687,9 +732,17 @@ def box(kind, pressed, S=13):
             for x in range(c0, c0 + s_ + 1):
                 p[(x, y)] = OUTLINE
     elif kind == "full":
-        # The whole interior outlined: as big as the box can draw a window.
-        # Distinct from zoom, whose square hangs off the top-left corner.
-        outline_rect(i0, i0, i1, i1)
+        # Four corner brackets: the mark for "push the edges all the way out".
+        # This drew the whole interior as one outlined rectangle before, which
+        # is a plain box with a ring around it -- at bar size barely tellable
+        # from the EMPTY close box, and the close box is the one mistake in
+        # this set nobody can afford to make.
+        arm = max(2, round(d * 0.34))
+        for t in range(arm + 1):
+            p[(i0 + t, i0)] = p[(i0, i0 + t)] = OUTLINE
+            p[(i1 - t, i0)] = p[(i1, i0 + t)] = OUTLINE
+            p[(i0 + t, i1)] = p[(i0, i1 - t)] = OUTLINE
+            p[(i1 - t, i1)] = p[(i1, i1 - t)] = OUTLINE
     elif kind == "kill":
         # Force quit: the X. Two-pixel strokes or it vanishes into the hatch.
         for t in range(d + 1):
@@ -879,9 +932,14 @@ end
 if have_plugin then
   hl.plugin.hyprbars.clear_buttons()
   local box = {{ bg_color = "rgb({CFG[pal]["face"]})", fg_color = "rgb({TEXTCOL})", size = {BOX_LOGICAL}, icon = "" }}
-  local function add(img, side, dispatch)
+  -- tooltip / tooltip_active / active_when are fork additions. Unknown TABLE
+  -- fields are ignored by add_button, so this file stays loadable on a build
+  -- that predates them -- unlike an unknown CONFIG key, which fails the whole
+  -- eval and would strip the frame until the next login.
+  local function add(img, side, dispatch, tip, tip_on, latch)
     hl.plugin.hyprbars.add_button({{ bg_color = box.bg_color, fg_color = box.fg_color,
-      size = box.size, icon = "", image = D .. img, side = side, dispatch = dispatch }})
+      size = box.size, icon = "", image = D .. img, side = side, dispatch = dispatch,
+      tooltip = tip, tooltip_active = tip_on, active_when = latch }})
   end
   -- `dispatch` runs the action IN THE PLUGIN, against this window. The shell
   -- form (`action = "hyprctl dispatch ..."`) still works but has two problems:

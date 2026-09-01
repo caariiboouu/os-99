@@ -40,9 +40,13 @@ GLYPHS = ("close", "zoom", "collapse", "shade", "float", "pin", "full", "kill")
 LABELS = {"close": "Close", "zoom": "Zoom", "collapse": "Collapse",
           "shade": "Windowshade", "float": "Float", "pin": "Pin",
           "full": "Fullscreen", "kill": "Force Quit"}
-# Where a box goes when toggled ON: close belongs alone on the left, the way
-# OS 9 had it; everything else joins the right side in canonical order.
-HOME_SIDE = {g: ("left" if g == "close" else "right") for g in GLYPHS}
+# Where a box goes when toggled ON. Close sits on the left, the way OS 9 had
+# it, and force quit joins it there: they are the two ways to end the window,
+# and the one that ends it RUDELY belongs next to the one that asks nicely
+# rather than hiding among the boxes that merely move it about. Everything
+# else joins the right side. Order within a side follows GLYPHS, so close
+# keeps the corner and kill lands inboard of it.
+HOME_SIDE = {g: ("left" if g in ("close", "kill") else "right") for g in GLYPHS}
 
 path, cmd = sys.argv[1], sys.argv[2]
 cfg = tomllib.load(open(path, "rb"))

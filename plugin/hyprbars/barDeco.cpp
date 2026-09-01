@@ -413,7 +413,10 @@ void CHyprBar::onMouseMove(Vector2D coords) {
         return;
 
     // ensure proper redraws of button icons on hover when using hardware cursors
-    if (g_pGlobalState->config.iconOnHover->value())
+    // -- and, with tooltips on, this is the ONLY thing that gets a frame drawn
+    // when the cursor arrives on a box. Nothing else damages: a cursor moving
+    // over a still window produces no damage of its own.
+    if (g_pGlobalState->config.iconOnHover->value() || g_pGlobalState->config.barTooltips->value())
         damageOnButtonHover();
 
     if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
@@ -846,6 +849,52 @@ size_t CHyprBar::getVisibleButtonCount(Config::INTEGER barButtonPadding, Config:
     return count;
 }
 
+// "…/bar_float.png" -> "…/bar_float_pressed.png". The suffix goes before the
+// extension rather than after the path, so it survives a name with dots in it
+// and a file with no extension at all.
+static std::string pressedImagePath(const std::string& image) {
+    const auto DOT   = image.find_last_of('.');
+    const auto SLASH = image.find_last_of('/');
+
+    if (DOT == std::string::npos || (SLASH != std::string::npos && DOT < SLASH))
+        return image + "_pressed";
+
+    return image.substr(0, DOT) + "_pressed" + image.substr(DOT);
+}
+
+bool CHyprBar::buttonLatched(const SHyprButton& button) {
+    if (button.activeWhen.empty())
+        return false;
+
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW || !validMapped(PWINDOW))
+        return false;
+
+    // Shade is ours -- Hyprland has no idea a window is rolled up -- so it is
+    // the one state read off the bar rather than off the window.
+    if (button.activeWhen == "shaded")
+        return m_bShaded;
+
+    if (button.activeWhen == "floating")
+        return PWINDOW->m_isFloating;
+
+    if (button.activeWhen == "pinned")
+        return PWINDOW->m_pinned;
+
+    // INTERNAL mode, not client: it is the mode Hyprland is actually holding
+    // the window in, which is what the box toggles. A client asking politely
+    // for fullscreen it did not get would otherwise latch the box.
+    const auto MODES = Fullscreen::controller()->getFullscreenModes(PWINDOW);
+
+    if (button.activeWhen == "maximized")
+        return MODES.internal == Fullscreen::FSMODE_MAXIMIZED;
+
+    if (button.activeWhen == "fullscreen")
+        return MODES.internal == Fullscreen::FSMODE_FULLSCREEN;
+
+    return false;
+}
+
 void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a) {
     const auto INACTIVECOLOR   = g_pGlobalState->config.inactiveButtonColor->value();
     const bool INVALIDATEICONS = m_bButtonsDirty || m_bWindowSizeChanged;
@@ -868,8 +917,28 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a) 
                 button.imageTex   = loadPixelTexture(button.image);
             }
 
-            if (button.imageTex) {
-                g_pHyprOpenGL->renderTexture(button.imageTex, buttonBox, {.a = a});
+            // A LATCHED box is drawn with its pressed art: the window is
+            // already in the state this box asks for, and a control that is
+            // held down is how that was always shown. The art is loaded lazily
+            // -- most boxes never latch, and every theme ships both files.
+            SP<Render::ITexture> tex = button.imageTex;
+            if (buttonLatched(button)) {
+                const std::string PRESSED = pressedImagePath(button.image);
+                struct stat       pst {};
+                const uint64_t    PSTAMP = (::stat(PRESSED.c_str(), &pst) == 0) ? (uint64_t)pst.st_mtime : 0;
+                if (button.imagePressedStamp != PSTAMP) {
+                    button.imagePressedStamp = PSTAMP;
+                    button.imagePressedTex   = loadPixelTexture(PRESSED);
+                }
+
+                // Falls back to the unpressed art rather than drawing nothing,
+                // so a theme that ships no _pressed file still gets a button.
+                if (button.imagePressedTex)
+                    tex = button.imagePressedTex;
+            }
+
+            if (tex) {
+                g_pHyprOpenGL->renderTexture(tex, buttonBox, {.a = a});
                 continue;
             }
         }
@@ -898,6 +967,12 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
     const auto HITSLOTS = buttonSlots(Vector2D{(double)(int)assignedBoxGlobal().w, (double)HEIGHT}, 1.F);
     const auto SLOTS    = buttonSlots(Vector2D{barBox->w, barBox->h}, scale);
 
+    // Which box the cursor is on, decided ONCE for the whole pass rather than
+    // per button. Reacting inside the loop gets a fast move between adjacent
+    // boxes wrong exactly half the time: enter-B then leave-A ends on "no
+    // button", and the tooltip that was owed never arrives.
+    int nowHovered = -1;
+
     for (size_t n = 0; n < SLOTS.size(); ++n) {
         const auto& SLOT   = SLOTS[n];
         auto&       button = g_pGlobalState->buttons[SLOT.index];
@@ -907,6 +982,9 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
             const auto& HIT = HITSLOTS[n].box;
             hovering        = VECINRECT(COORDS, HIT.x, HIT.y, HIT.x + HIT.w, HIT.y + HIT.h);
         }
+
+        if (hovering)
+            nowHovered = (int)SLOT.index;
 
         const auto trackHover = [&]() {
             bool currentBit = (m_iButtonHoverState & (1 << SLOT.index)) != 0;
@@ -944,6 +1022,47 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
 
         trackHover();
     }
+
+    // Settled once, after every slot has been looked at.
+    if (nowHovered != m_hoveredButton)
+        onButtonHoverChanged(nowHovered);
+}
+
+// The cursor came to rest somewhere new. Any tooltip that is up belongs to the
+// box it has left, so it goes immediately; the new one is owed the full delay.
+void CHyprBar::onButtonHoverChanged(int index) {
+    m_hoveredButton = index;
+
+    if (m_tooltipShown) {
+        m_tooltipShown = false;
+        damageEntire();
+    }
+
+    const auto TIMER = g_pGlobalState->tooltipTimer;
+    if (!TIMER)
+        return;
+
+    const bool WANT = index >= 0 && index < (int)g_pGlobalState->buttons.size() && g_pGlobalState->config.barTooltips->value() &&
+        !g_pGlobalState->buttons[index].tooltip.empty();
+
+    if (!WANT) {
+        // Only disarm a countdown that is OURS. Another bar may have armed it
+        // since, and cancelling that one would silently eat its tooltip.
+        if (g_pGlobalState->tooltipBar == m_self)
+            TIMER->updateTimeout(std::nullopt);
+        return;
+    }
+
+    g_pGlobalState->tooltipBar = m_self;
+    TIMER->updateTimeout(std::chrono::milliseconds(std::max(0, (int)g_pGlobalState->config.barTooltipDelay->value())));
+}
+
+void CHyprBar::showTooltip() {
+    if (barsShuttingDown() || m_hoveredButton < 0)
+        return;
+
+    m_tooltipShown = true;
+    damageEntire();
 }
 
 void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
@@ -1230,6 +1349,10 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
 
     renderBarButtonsText(&textBox, pMonitor->m_scale, a);
 
+    // Last, and only here: the scissor was dropped above, so this is the one
+    // point in the pass where something may be drawn outside the frame.
+    renderTooltip(pMonitor, a);
+
     m_bWindowSizeChanged = false;
     m_bTitleColorChanged = false;
 
@@ -1353,9 +1476,13 @@ void CHyprBar::keepBarBelowPanels() {
     if (m_clampTries >= CLAMP_ATTEMPTS)
         return;
 
+    // Deliberately silent on failure. This runs from layout events, where an
+    // escaping exception is std::terminate, and plugin logging is the one
+    // thing here already known to be able to throw -- it took the session down
+    // once from inside the tooltip timer. A clamp that does not take shows
+    // itself anyway: the bar is where it should not be.
     ++m_clampTries;
-    if (!Config::Actions::move(Vector2D{0.0, floorY - POS.y}, true, PWINDOW))
-        Log::logger->log(Log::ERR, "[hyprbars] could not move the bar out from under the status bar");
+    (void)Config::Actions::move(Vector2D{0.0, floorY - POS.y}, true, PWINDOW);
 }
 
 void CHyprBar::updateWindow(PHLWINDOW pWindow) {
@@ -1382,6 +1509,27 @@ void CHyprBar::onConfigReloaded() {
     damageEntire();
 }
 
+// Where the tooltip sits, in global logical coordinates, or an empty box when
+// none is up.
+//
+// Before the first frame draws one there is no measured box yet -- the width
+// comes from the rendered text -- so a deliberately generous stand-in is
+// returned instead. It is only ever used to damage and to keep the pass
+// element from being occluded, where too big costs a few pixels of repaint and
+// too small costs a tooltip that never appears.
+CBox CHyprBar::tooltipBoxGlobal() {
+    if (!m_tooltipShown)
+        return CBox{};
+
+    if (m_lastTooltipBox.w > 0 && m_lastTooltipBox.h > 0)
+        return m_lastTooltipBox;
+
+    const auto BAR    = assignedBoxGlobal();
+    const auto HEIGHT = g_pGlobalState->config.barHeight->value();
+
+    return CBox{BAR.x, BAR.y + BAR.h, BAR.w, std::max(1.0, (double)HEIGHT) * 3.0};
+}
+
 void CHyprBar::damageEntire() {
     if (barsShuttingDown())
         return;
@@ -1389,6 +1537,110 @@ void CHyprBar::damageEntire() {
     // Must cover the side and bottom bezels too, or dragging a window leaves
     // the frame smeared behind it.
     g_pHyprRenderer->damageBox(frameBoxGlobal());
+
+    // A tooltip hangs outside the bar, and the ground it stood on has to be
+    // repainted when it goes AWAY as much as when it arrives -- so the last
+    // box is damaged and only then forgotten, once it is no longer showing.
+    if (m_lastTooltipBox.w > 0 && m_lastTooltipBox.h > 0) {
+        g_pHyprRenderer->damageBox(m_lastTooltipBox);
+        if (!m_tooltipShown)
+            m_lastTooltipBox = CBox{};
+    }
+}
+
+// What a box does, said in words, once the cursor has rested on it.
+//
+// Drawn at the very end of the render pass, which is the one place the scissor
+// has already been dropped (renderPass calls scissor(nullptr) before the button
+// text) -- everything earlier is clipped to the frame, and a tooltip has to
+// hang below it.
+void CHyprBar::renderTooltip(PHLMONITOR pMonitor, const float a) {
+    if (!m_tooltipShown || m_hoveredButton < 0 || m_hoveredButton >= (int)g_pGlobalState->buttons.size())
+        return;
+
+    const auto& BUTTON = g_pGlobalState->buttons[m_hoveredButton];
+
+    // A latched box names the way back out instead of repeating the way in.
+    const std::string TEXT = (buttonLatched(BUTTON) && !BUTTON.tooltipActive.empty()) ? BUTTON.tooltipActive : BUTTON.tooltip;
+    if (TEXT.empty())
+        return;
+
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return;
+
+    const auto SCALE  = pMonitor->m_scale;
+    const auto HEIGHT = g_pGlobalState->config.barHeight->value();
+    const auto TEXTCOL = m_bForcedTitleColor.value_or(configColor(g_pGlobalState->config.textColor->value()));
+
+    if (!m_tooltipTex || m_tooltipTex->m_texID == 0 || m_tooltipTexFor != TEXT || m_tooltipTexScale != SCALE) {
+        // The SYNCHRONOUS overload, for the reason spelled out in full over
+        // renderBarTitle: the STextResourceData one awaits a worker thread
+        // from inside the render pass and wedges the whole compositor.
+        m_tooltipTex      = g_pHyprRenderer->renderText(TEXT, TEXTCOL, std::round(g_pGlobalState->config.barTextSize->value() * SCALE), false,
+                                                        g_pGlobalState->config.barTextFont->value(), 0);
+        m_tooltipTexFor   = TEXT;
+        m_tooltipTexScale = SCALE;
+    }
+
+    if (!m_tooltipTex || m_tooltipTex->m_texID == 0)
+        return;
+
+    // Sized in LOGICAL px from a texture measured in device px, so the padding
+    // is the same width on every display rather than shrinking as scale grows.
+    const double PAD_X = 6, PAD_Y = 3, GAP = 4;
+    const double W = m_tooltipTex->m_size.x / SCALE + PAD_X * 2;
+    const double H = m_tooltipTex->m_size.y / SCALE + PAD_Y * 2;
+
+    const auto BAR = assignedBoxGlobal();
+
+    double centre = BAR.x + BAR.w / 2.0;
+    for (const auto& SLOT : buttonSlots(Vector2D{(double)(int)BAR.w, (double)HEIGHT}, 1.F)) {
+        if ((int)SLOT.index == m_hoveredButton) {
+            centre = BAR.x + SLOT.box.x + SLOT.box.w / 2.0;
+            break;
+        }
+    }
+
+    double x = centre - W / 2.0;
+    double y = BAR.y + BAR.h + GAP;
+
+    // Stay on the monitor: a box near the right edge would otherwise hang its
+    // tooltip off the screen, and a bar near the bottom would put it under the
+    // edge -- in which case it goes above the bar instead.
+    const double MINX = pMonitor->m_position.x + 2;
+    const double MAXX = pMonitor->m_position.x + pMonitor->m_size.x / SCALE - W - 2;
+    x                 = std::clamp(x, MINX, std::max(MINX, MAXX));
+
+    if (y + H > pMonitor->m_position.y + pMonitor->m_size.y / SCALE - 2)
+        y = BAR.y - H - GAP;
+
+    m_lastTooltipBox = CBox{x, y, W, H};
+
+    CBox box = {x - pMonitor->m_position.x, y - pMonitor->m_position.y, W, H};
+    box.translate(PWINDOW->m_floatingOffset).scale(SCALE).round();
+
+    auto face = configColor(g_pGlobalState->config.barClearColor->value());
+    if (face.a <= 0.F)
+        face = m_bForcedBarColor.value_or(configColor(g_pGlobalState->config.barColor->value()));
+
+    auto border = TEXTCOL;
+    auto shadow = CHyprColor{0, 0, 0, 0.45};
+
+    face.a *= a;
+    border.a *= a;
+    shadow.a *= a;
+
+    // Platinum, so: a hard offset shadow with no blur at all, a 1px rule, and
+    // a flat face. Blur is the giveaway that something is not classic Mac.
+    const double OFF = std::round(2 * SCALE);
+    g_pHyprOpenGL->renderRect(CBox{box.x + OFF, box.y + OFF, box.w, box.h}, shadow, {});
+    g_pHyprOpenGL->renderRect(box, border, {});
+    g_pHyprOpenGL->renderRect(CBox{box.x + 1, box.y + 1, box.w - 2, box.h - 2}, face, {});
+
+    CBox textBox = {box.x + std::round((box.w - m_tooltipTex->m_size.x) / 2.0), box.y + std::round((box.h - m_tooltipTex->m_size.y) / 2.0), m_tooltipTex->m_size.x,
+                    m_tooltipTex->m_size.y};
+    g_pHyprOpenGL->renderTexture(m_tooltipTex, textBox, {.a = a});
 }
 
 Vector2D CHyprBar::cursorRelativeToBar() {
@@ -1491,17 +1743,24 @@ void CHyprBar::damageOnButtonHover() {
     const auto HEIGHT = g_pGlobalState->config.barHeight->value();
     const auto COORDS = cursorRelativeToBar();
 
-    bool       hover = false;
+    int        hovered = -1;
     for (const auto& SLOT : buttonSlots(Vector2D{(double)(int)assignedBoxGlobal().w, (double)HEIGHT}, 1.F)) {
         const auto& BOX = SLOT.box;
         if (VECINRECT(COORDS, BOX.x, BOX.y, BOX.x + BOX.w, BOX.y + BOX.h)) {
-            hover = true;
+            hovered = (int)SLOT.index;
             break;
         }
     }
 
-    if (hover != m_bButtonHovered) {
-        m_bButtonHovered = hover;
+    const bool HOVER = hovered >= 0;
+
+    // Damage on a slide from one box to the NEXT as well as on and off the
+    // set. That move does not change "is a box hovered", so watching only the
+    // boolean leaves the tooltip naming the box the cursor has already left.
+    // m_hoveredButton is what the render pass concluded last time; if it
+    // disagrees with the cursor now, a frame is owed.
+    if (HOVER != m_bButtonHovered || hovered != m_hoveredButton) {
+        m_bButtonHovered = HOVER;
         damageEntire();
     }
 }

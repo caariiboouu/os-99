@@ -7,6 +7,7 @@
 #include <hyprland/src/config/values/types/StringValue.hpp>
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/FontWeightValue.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 
 inline HANDLE PHANDLE = nullptr;
 
@@ -47,6 +48,28 @@ struct SHyprButton {
     // close box alone on the left and collapse+zoom on the right, which upstream
     // cannot express -- it only has one global side.
     std::string          side    = "";
+
+    // What the box says when the cursor rests on it, and what it says while it
+    // is LATCHED -- a box that toggles has to name the way back out, not repeat
+    // the way in. Empty tooltip means the box explains itself and stays quiet.
+    std::string          tooltip       = "";
+    std::string          tooltipActive = "";
+
+    // The window state that latches this box: "floating", "pinned", "shaded",
+    // "maximized" or "fullscreen". Empty means it never latches -- closing and
+    // force-quitting are not states a window can sit in.
+    //
+    // Read live off the window at draw time and never stored, so a change made
+    // by a keybind, another box, or the window itself is reflected without
+    // anything having to notify us.
+    std::string          activeWhen    = "";
+
+    // The dished-in art, drawn while the box is latched: a latched control is
+    // held down, which is how every toggle in this era showed itself. Loaded
+    // from <image>_pressed.png and keyed on mtime exactly like imageTex, so a
+    // theme switch repaints it without a plugin reload.
+    SP<Render::ITexture> imagePressedTex;
+    uint64_t             imagePressedStamp = UINT64_MAX;
 };
 
 class CHyprBar;
@@ -58,6 +81,13 @@ struct SGlobalState {
     bool                      shuttingDown = false;
     std::vector<SHyprButton>  buttons;
     std::vector<WP<CHyprBar>> bars;
+
+    // ONE tooltip timer for the whole plugin. Only one box can be under the
+    // cursor at a time, so a timer per bar would be one idle timer per window
+    // for a single possible tooltip -- and one more thing to cancel on unload,
+    // where a timer that outlives the .so calls into unmapped code.
+    SP<CEventLoopTimer>       tooltipTimer;
+    WP<CHyprBar>              tooltipBar;
     uint32_t                  nobarRuleIdx      = 0;
     uint32_t                  barColorRuleIdx   = 0;
     uint32_t                  titleColorRuleIdx = 0;
@@ -69,7 +99,8 @@ struct SGlobalState {
         SP<Config::Values::CFontWeightValue> barTextWeight;
         SP<Config::Values::CIntValue>        barPadding;
         SP<Config::Values::CIntValue>        barButtonPadding;
-        SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
+        SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, barTooltips;
+        SP<Config::Values::CIntValue>        barTooltipDelay;
         SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, barMenuCommand;
         SP<Config::Values::CStringValue>     barTexture, barTextureBorder;
         SP<Config::Values::CStringValue>     frameTexture, frameTextureBorder, frameInset;
