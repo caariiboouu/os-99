@@ -60,10 +60,14 @@ be loaded alongside upstream hyprbars — pick one.
 ### 2a. On Omarchy
 
 ```
-git clone https://github.com/caariiboouu/os-99
-cd os-99 && ./bin/os99-install
+omarchy plugin add https://github.com/caariiboouu/os-99 --enable
+~/.config/omarchy/plugins/io.github.caariiboouu.os-99/bin/os99-install
 omarchy theme set "OS 99 Platinum"
 ```
+
+The first line installs the bar widget the collapse box needs and leaves a
+checkout of this repository in place; the second does the per-machine work.
+A plain `git clone` works too — run `./bin/os99-install` from the checkout.
 
 `os99-install` is safe to re-run, and re-running it is the fix for most things.
 It checks prerequisites, matches the art to your display, resolves the font,
@@ -90,6 +94,23 @@ dofile(os99_dir .. "/bars.lua")
 Set `OS99_DIR` to keep the art somewhere else, and `OS99_PALETTE=dark` for the
 Graphite palette.
 
+## Remove
+
+Everything the install put down, in reverse:
+
+```
+hyprpm disable hyprbars-os99 && hyprpm remove https://github.com/caariiboouu/os-99
+omarchy plugin remove io.github.caariiboouu.os-99
+omarchy theme remove "OS 99 Platinum"     # and "OS 99 Graphite", "OS 99 Noir"
+rm -f ~/.local/bin/os99-* \
+      ~/.config/omarchy/hooks/theme-set.d/os99-*.sh \
+      ~/.config/omarchy/hooks/post-boot.d/os99-*.sh \
+      ~/.config/omarchy/os99-theme.toml
+```
+
+Switch to another theme first if one of these is active. On plain Hyprland,
+delete `~/.local/share/os99` and the `dofile` line you added.
+
 ## The title bar boxes
 
 The close box is on the left; zoom and collapse are on the right, as they were.
@@ -108,8 +129,7 @@ os99-minimize restore     # bring back the most recent
 os99-minimize restore-all
 ```
 
-...the bar widget (`j.os99-minimized`, Omarchy only), or simply switching to that
-workspace. If you would rather bind it than click it:
+...the bar widget (Omarchy only), or simply switching to that workspace. If you would rather bind it than click it:
 
 ```lua
 hl.bind("SUPER + M", hl.dsp.exec_cmd("hyprctl eval 'hl.plugin.hyprbars.minimize()'"))
