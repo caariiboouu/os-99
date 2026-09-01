@@ -101,6 +101,10 @@ class CHyprBar : public IHyprWindowDecoration {
     // the BUTTON does not know: a latched box says the way back out.
     int                        m_hoveredButton   = -1;
     bool                       m_tooltipShown    = false;
+    // When the cursor arrived on the current box. The tooltip is owed a delay
+    // from this instant -- see renderTooltipInner for how it is counted down
+    // without a timer.
+    Time::steady_tp            m_hoverSince      = Time::steadyNow();
     SP<Render::ITexture>       m_tooltipTex;
     std::string                m_tooltipTexFor;
     float                      m_tooltipTexScale = 0;

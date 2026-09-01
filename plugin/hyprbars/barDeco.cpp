@@ -1028,28 +1028,24 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
         onButtonHoverChanged(nowHovered);
 }
 
-// The cursor came to rest somewhere new.
+// The cursor came to rest somewhere new. The delay starts over.
 //
-// NO TIMER. There was one, to hold the tooltip back for a moment the way a
-// desktop tooltip does, and it took the session down TWICE from inside its
-// callback -- Hyprland runs those straight off the Wayland event loop, where
-// anything thrown is std::terminate, and a try/catch around the body did not
-// contain it either. A delay is not worth a crash, and OS 9's own Balloon Help
-// appeared the instant you pointed at something anyway.
+// NO TIMER. There was one, to hold the tooltip back the way OS 9 does, and it
+// took the session down TWICE from inside its callback -- Hyprland runs those
+// straight off the Wayland event loop, where anything thrown is std::terminate,
+// and a try/catch around the whole callback body did not contain it either.
 //
-// So the tooltip is decided here, in the render path that already tracks
-// hover, and drawn in the same pass. Nothing is scheduled and nothing is
-// called back.
+// The delay is counted in the RENDER path instead (see renderTooltipInner):
+// while it runs, each frame asks for the next one, so it finishes even with the
+// cursor perfectly still -- a still cursor emits no events of its own. That
+// costs a few dozen frames of the bar's own damage region for half a second,
+// and there is no callback left that could take the session down.
 void CHyprBar::onButtonHoverChanged(int index) {
     m_hoveredButton = index;
+    m_hoverSince    = Time::steadyNow();
+    m_tooltipShown  = false;
 
-    const bool WANT = index >= 0 && index < (int)g_pGlobalState->buttons.size() && g_pGlobalState->config.barTooltips->value() &&
-        !g_pGlobalState->buttons[index].tooltip.empty();
-
-    if (m_tooltipShown != WANT) {
-        m_tooltipShown = WANT;
-        damageEntire();
-    }
+    damageEntire();
 }
 
 void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
@@ -1511,10 +1507,14 @@ CBox CHyprBar::tooltipBoxGlobal() {
     if (m_lastTooltipBox.w > 0 && m_lastTooltipBox.h > 0)
         return m_lastTooltipBox;
 
-    const auto BAR    = assignedBoxGlobal();
-    const auto HEIGHT = g_pGlobalState->config.barHeight->value();
+    const auto   BAR   = assignedBoxGlobal();
+    const auto   FRAME = frameBoxGlobal();
+    const double BAND  = std::max(1.0, (double)g_pGlobalState->config.barHeight->value()) * 3.0;
 
-    return CBox{BAR.x, BAR.y + BAR.h, BAR.w, std::max(1.0, (double)HEIGHT) * 3.0};
+    // Covers BOTH placements -- below the bar, and above it for a window too
+    // short to hold one -- across the frame's full width, because which of
+    // those the tooltip picks is not known until it has been measured.
+    return CBox{std::min(BAR.x, FRAME.x), BAR.y - BAND, std::max(BAR.w, FRAME.w), BAR.h + BAND * 2.0};
 }
 
 void CHyprBar::damageEntire() {
@@ -1552,15 +1552,34 @@ void CHyprBar::renderTooltip(PHLMONITOR pMonitor, const float a) {
 }
 
 void CHyprBar::renderTooltipInner(PHLMONITOR pMonitor, const float a) {
-    if (!m_tooltipShown || m_hoveredButton < 0 || m_hoveredButton >= (int)g_pGlobalState->buttons.size())
+    if (m_hoveredButton < 0 || m_hoveredButton >= (int)g_pGlobalState->buttons.size() || !g_pGlobalState->config.barTooltips->value())
         return;
 
     const auto& BUTTON = g_pGlobalState->buttons[m_hoveredButton];
 
-    // A latched box names the way back out instead of repeating the way in.
+    // A latched box is named for what it does NEXT, which is the opposite
+    // thing, so it gets its own name rather than repeating the one that got
+    // the window into this state.
     const std::string TEXT = (buttonLatched(BUTTON) && !BUTTON.tooltipActive.empty()) ? BUTTON.tooltipActive : BUTTON.tooltip;
     if (TEXT.empty())
         return;
+
+    // THE DELAY, counted here rather than on a timer. A pointer resting on a
+    // box has stopped moving, so no input event will arrive to mark the moment
+    // the wait is over -- but a frame can ask for the frame after it. While the
+    // countdown runs, each pass damages the bar, which schedules the next pass;
+    // when it expires the tooltip is drawn and the asking stops. Bounded by the
+    // delay, and there is no callback for an exception to escape from.
+    if (!m_tooltipShown) {
+        const auto WAITED = std::chrono::duration_cast<std::chrono::milliseconds>(Time::steadyNow() - m_hoverSince).count();
+
+        if (WAITED < std::max<int64_t>(0, (int64_t)g_pGlobalState->config.barTooltipDelay->value())) {
+            damageEntire();
+            return;
+        }
+
+        m_tooltipShown = true;
+    }
 
     const auto PWINDOW = m_pWindow.lock();
     if (!PWINDOW)
@@ -1599,18 +1618,36 @@ void CHyprBar::renderTooltipInner(PHLMONITOR pMonitor, const float a) {
         }
     }
 
-    double x = centre - W / 2.0;
-    double y = BAR.y + BAR.h + GAP;
+    double     x     = centre - W / 2.0;
+    double     y     = BAR.y + BAR.h + GAP;
 
-    // Stay on the monitor: a box near the right edge would otherwise hang its
-    // tooltip off the screen, and a bar near the bottom would put it under the
-    // edge -- in which case it goes above the bar instead.
+    const auto FRAME = frameBoxGlobal();
+
+    // KEEP IT OVER ITS OWN WINDOW. Centring on the box alone sends the tooltip
+    // off the side whenever the box is near an edge -- it reads as belonging to
+    // nothing, and anything outside the frame is at the mercy of the pass
+    // element's bounding box, which is where being cut in half comes from.
+    // So the window's own span is the first choice of home; the monitor is only
+    // consulted when the tooltip is wider than the window it belongs to.
+    double lo = FRAME.x + 1, hi = FRAME.x + FRAME.w - W - 1;
+    if (hi >= lo)
+        x = std::clamp(x, lo, hi);
+
+    // The monitor has the last word either way: a window can hang off the
+    // screen, and a tooltip that follows it there is simply gone.
     const double MINX = pMonitor->m_position.x + 2;
     const double MAXX = pMonitor->m_position.x + pMonitor->m_size.x / SCALE - W - 2;
     x                 = std::clamp(x, MINX, std::max(MINX, MAXX));
 
-    if (y + H > pMonitor->m_position.y + pMonitor->m_size.y / SCALE - 2)
+    // Below the bar, unless that puts it past the foot of the window (a short
+    // window, or one rolled up to its bar) or off the bottom of the screen --
+    // then it sits above the bar instead.
+    const double MAXY = pMonitor->m_position.y + pMonitor->m_size.y / SCALE - 2;
+    if (y + H > FRAME.y + FRAME.h - 1 || y + H > MAXY)
         y = BAR.y - H - GAP;
+
+    if (y < pMonitor->m_position.y + 2)
+        y = std::min(BAR.y + BAR.h + GAP, MAXY - H);
 
     m_lastTooltipBox = CBox{x, y, W, H};
 

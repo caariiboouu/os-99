@@ -97,7 +97,7 @@ struct SGlobalState {
         SP<Config::Values::CStringValue>     frameTexture, frameTextureBorder, frameInset;
         SP<Config::Values::CColorValue>      barClearColor;
         SP<Config::Values::CBoolValue>       frameTextureUnscaled, frameOverWindow, frameForceSquare, frameForceFlat;
-        SP<Config::Values::CIntValue>        barTextClearPad, barButtonClearPad;
+        SP<Config::Values::CIntValue>        barTextClearPad, barButtonClearPad, barTooltipDelay;
         SP<Config::Values::CIntValue>        barClearInsetTop, barClearInsetBottom;
     } config;
 };

@@ -557,19 +557,22 @@ DISPATCH = {
     "kill":     "kill",         # force quit; also opt-in only
 }
 
-# What a box says when you rest on it, and what it says while it is LATCHED --
-# because a box that toggles has to name the way back, not repeat the way in.
-# Boxes with no second string do not latch: closing and force-quitting are not
-# states a window can sit in, and a minimized window has no bar to hover.
+# What a box is CALLED. The name, not a lesson -- the same label the
+# right-click menu uses, so the two never disagree about what a box is.
+#
+# The second string is the name while the box is LATCHED, because the thing it
+# does then is the opposite thing and deserves its own name. Boxes with no
+# second string never latch: closing and force-quitting are not states a window
+# can sit in, and a minimized window has no bar left to hover.
 TOOLTIP = {
-    "close":    ("Close",                      ""),
-    "zoom":     ("Zoom - fill the screen",     "Zoom - put it back"),
-    "collapse": ("Minimize to the bar",        ""),
-    "shade":    ("Roll up to the title bar",   "Roll back down"),
-    "float":    ("Float this window",          "Return it to the tiling"),
-    "pin":      ("Pin above other windows",    "Unpin"),
-    "full":     ("Fullscreen - hides this bar", "Leave fullscreen"),
-    "kill":     ("Force quit",                 ""),
+    "close":    ("Close",       ""),
+    "zoom":     ("Zoom",        "Unzoom"),
+    "collapse": ("Collapse",    ""),
+    "shade":    ("Windowshade", "Unshade"),
+    "float":    ("Float",       "Unfloat"),
+    "pin":      ("Pin",         "Unpin"),
+    "full":     ("Fullscreen",  "Leave Fullscreen"),
+    "kill":     ("Force Quit",  ""),
 }
 
 # The window state that latches each box, drawn with its pressed art and

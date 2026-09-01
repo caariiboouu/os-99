@@ -386,6 +386,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         "plugin:hyprbars:bar_menu_command", "Command spawned on right-click of bar face (not a button). The clicked window's address is appended. Empty runs ~/.local/bin/os99-bar-menu", "");
     g_pGlobalState->config.barTooltips         = makeShared<Config::Values::CBoolValue>(
         "plugin:hyprbars:bar_tooltips", "Whether pointing at a title-bar button names what it does", true);
+    g_pGlobalState->config.barTooltipDelay     = makeShared<Config::Values::CIntValue>(
+        "plugin:hyprbars:bar_tooltip_delay", "How long the pointer must rest on a button before its name appears, in ms", 500);
 
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barColor);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.textColor);
@@ -421,6 +423,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.onDoubleClick);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barMenuCommand);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTooltips);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTooltipDelay);
 
     if (Config::mgr()->type() == Config::CONFIG_LEGACY)
         HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});
