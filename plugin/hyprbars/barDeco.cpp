@@ -577,14 +577,20 @@ void CHyprBar::runNativeDispatch(const std::string& what) {
     else if (what == "maximize")
         REPORT(fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, true, PWINDOW));
     else if (what == "fullscreen")
-        // INTERNAL maximized, CLIENT fullscreen. True fullscreen hands the
-        // whole output to the window and Hyprland draws no decoration on it --
-        // so the box that got you there is gone, and the only way back is a
-        // keybind you have to already know. Holding the window at MAXIMIZED
-        // internally keeps the title bar, while telling the CLIENT it is
-        // fullscreen still gets the app's own fullscreen behaviour. The box
-        // stays on screen and undoes itself.
-        REPORT(fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, Fullscreen::FSMODE_FULLSCREEN, true, PWINDOW));
+        // TRUE fullscreen, and it really does take the title bar with it.
+        //
+        // Holding the window at MAXIMIZED internally and only telling the
+        // client it is fullscreen keeps the bar, and was tried -- but on any
+        // window that does not change its own chrome it is indistinguishable
+        // from zoom, which already maximises WITH the bar. Two boxes doing one
+        // thing is worse than one box with a caveat.
+        //
+        // So this is the real thing: the window owns the whole output, no
+        // decoration is drawn on it (verified -- the status bar goes too), and
+        // the way back is SUPER+F, which Omarchy binds as a toggle. A title-bar
+        // button cannot survive removing the title bar; that is the nature of
+        // the action, not a defect in the button.
+        REPORT(fullscreenWindow(Fullscreen::FSMODE_FULLSCREEN, true, PWINDOW));
     else if (what == "float")
         REPORT(floatWindow(TOGGLE_ACTION_TOGGLE, PWINDOW));
     else if (what == "pin")

@@ -125,13 +125,14 @@ carries is yours to choose:
 | `collapse` | bar along the bottom | minimize to the bar widget | |
 | `shade` | two slats | roll up to just the title bar | ✓ |
 | `float` | two overlapping windows | toggle floating | ✓ |
-| `pin` | solid square | pin a floating window | ✓ |
-| `full` | four corner brackets | true fullscreen — hides the bar; opt-in for a reason | ✓ |
+| `pin` | solid square | pin a floating window — only shown while it floats | ✓ |
+| `full` | four corner brackets | true fullscreen — takes the bar with it, `SUPER+F` returns | |
 
 Rest on a box and it names what it does. A box that **latches** is drawn held
 down while the window is already in that state, and then its tooltip names the
-way back out rather than repeating the way in — "Return it to the tiling", not
-"Float this window". The state is read off the window every frame, so a change
+way back out rather than repeating the way in — "Unfloat", not "Float". The
+names match the right-click menu's. The state is read off the window every
+frame, so a change
 made by a keybind or by the window itself shows up on the box too. Tooltips are
 `plugin:hyprbars:bar_tooltips` and `bar_tooltip_delay` (ms) if you want them
 gone or slower.
@@ -139,6 +140,16 @@ gone or slower.
 The two slats are the traced OS 9 windowshade box, so they sit on `shade`, the
 box that actually rolls a window up. Minimize is not an OS 9 idea and gets its
 own mark instead of borrowing that one.
+
+`full` is the one box that cannot undo itself. True fullscreen hands the whole
+output to the window and the compositor draws no decoration on it — the status
+bar goes too — so the box you would click to come back is not there. **`SUPER+F`
+toggles it back.** Holding the window at maximized and only telling the client
+it is fullscreen would keep the bar, but on anything that does not restyle its
+own chrome that is exactly what `zoom` already does, and two boxes doing one
+thing is worse than one box with a caveat. If you would rather not have the
+trap at all, `os99-buttons toggle full` takes it off the bar — `zoom` already
+gives you a full-screen window that keeps its title bar.
 
 **Right-click anywhere on the bar that is not a box** and an OS 9 menu opens
 with the full list — click to toggle, checkmarks show what is on (Omarchy
