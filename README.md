@@ -114,6 +114,37 @@ delete `~/.local/share/os99` and the `dofile` line you added.
 ## The title bar boxes
 
 The close box is on the left; zoom and collapse are on the right, as they were.
+That is the default, not the limit — eight boxes exist, and which ones a bar
+carries is yours to choose:
+
+| box | glyph | does |
+|---|---|---|
+| `close` | plain box | close the window |
+| `zoom` | square off the top-left corner | expand, keeping the title bar |
+| `collapse` | two slats | minimize to the bar widget |
+| `shade` | one slat | roll up to just the title bar |
+| `float` | two overlapping windows | toggle floating |
+| `pin` | solid square | pin a floating window |
+| `full` | full-interior outline | true fullscreen — hides the bar; opt-in for a reason |
+| `kill` | the X | force quit; also opt-in for a reason |
+
+**Right-click anywhere on the bar that is not a box** and an OS 9 menu opens
+with the full list — click to toggle, checkmarks show what is on (Omarchy
+shell only). The same switch from a terminal:
+
+```
+os99-buttons list
+os99-buttons toggle float
+```
+
+Both edit `[buttons] left/right` in `os99-theme.toml` (corner-first per side)
+and apply live. All eight boxes' art is drawn every run, so toggling never
+waits on a redraw.
+
+A floating window's title bar can also never end up under the status bar: the
+status bar is a top layer, so a bar beneath it would be unclickable — the one
+handle a floating window has, gone. The plugin nudges any such window back
+below the reserved area, the way nothing was allowed over the OS 9 menu bar.
 
 Collapse **minimizes**: the window is parked on a workspace called
 `os99-minimized` and the bar widget offers it back. Hyprland has no minimize, and
@@ -136,9 +167,10 @@ hl.bind("SUPER + M", hl.dsp.exec_cmd("hyprctl eval 'hl.plugin.hyprbars.minimize(
 ```
 
 Windowshade -- rolling the window up into just its bar, the way System 7 did --
-is still there as `hl.plugin.hyprbars.shade()`, but it is not on a box. Rolling a
-window up means floating it, and Hyprland re-centres a floated window, which can
-put the bar above the top of the screen.
+is the `shade` box (or `hl.plugin.hyprbars.shade()` on a key). It is off by
+default: rolling a window up means floating it, and Hyprland re-centres a
+floated window. The plugin bounds the correction it applies when that happens,
+so the bar can sit a little high in the worst case, but never off screen.
 
 ## Why the art is generated rather than shipped as final PNGs
 

@@ -2,11 +2,15 @@
   "schemaVersion": 1,
   "id": "io.github.caariiboouu.os-99",
   "name": "OS 99",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Joel Cuthriell",
-  "description": "Mac OS 9-style window chrome for Hyprland: pinstriped title bars, bezelled nine-patch frames, minimize-to-bar, and three full Omarchy themes (Platinum, Graphite, Noir).",
-  "kinds": ["bar-widget"],
-  "entryPoints": { "barWidget": "shell-plugin/os99/BarWidget.qml" },
+  "description": "Mac OS 9-style window chrome for Hyprland: pinstriped title bars, bezelled nine-patch frames, minimize-to-bar, configurable title-bar boxes, and three full Omarchy themes (Platinum, Graphite, Noir).",
+  "kinds": ["bar-widget", "panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "shell-plugin/os99/BarWidget.qml",
+    "panel": "shell-plugin/os99/Menu.qml"
+  },
   "barWidget": {
     "displayName": "OS 99",
     "description": "Windows parked by the title bar's collapse box, and the OS 99 menu-bar font",

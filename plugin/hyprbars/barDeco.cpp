@@ -8,10 +8,12 @@
 #include <cctype>
 #include <cstdlib>
 #include <format>
+#include <linux/input-event-codes.h>
 
 // Attempts allowed to nudge a shaded window's bar back on screen. See
 // keepShadeOnScreen(): this bound is what keeps it from becoming a move loop.
 static constexpr int SHADE_FIX_ATTEMPTS = 3;
+static constexpr int CLAMP_ATTEMPTS     = 3;
 
 #include <sys/stat.h>
 
@@ -321,6 +323,16 @@ bool CHyprBar::inputIsValid() {
 }
 
 void CHyprBar::onMouseButton(Event::SCallbackInfo& info, IPointer::SButtonEvent e) {
+    // BEFORE inputIsValid, which yields to top layers: a release with the
+    // cursor over the status bar is precisely the one that ends a drag that
+    // parked this window underneath it, and it must still reset the clamp
+    // budget and nudge the window back out. Cheap for every other bar -- the
+    // clamp early-outs unless its own window is floating and out of bounds.
+    if (e.state != WL_POINTER_BUTTON_STATE_PRESSED && !barsShuttingDown()) {
+        m_clampTries = 0;
+        keepBarBelowPanels();
+    }
+
     if (!inputIsValid())
         return;
 
@@ -329,7 +341,56 @@ void CHyprBar::onMouseButton(Event::SCallbackInfo& info, IPointer::SButtonEvent 
         return;
     }
 
+    // Right-click on bar face opens the box menu; on a box it does nothing at
+    // all (box actions are left-click). Everything else is the old path.
+    if (e.button == BTN_RIGHT) {
+        handleContextDown(info);
+        return;
+    }
+
     handleDownEvent(info, std::nullopt);
+}
+
+void CHyprBar::handleContextDown(Event::SCallbackInfo& info) {
+    if (barsShuttingDown())
+        return;
+
+    const auto COORDS = cursorRelativeToBar();
+    const auto HEIGHT = g_pGlobalState->config.barHeight->value();
+
+    if (!VECINRECT(COORDS, 0, 0, assignedBoxGlobal().w, HEIGHT - 1))
+        return;
+
+    // The click is the bar's either way; a right-click must not fall through
+    // and become the client's, or worse, start a drag.
+    info.cancelled   = true;
+    m_bCancelledDown = true;
+
+    // Over a box the right-click is swallowed, not repurposed -- a destructive
+    // action behind the "wrong" button on the close box is a trap.
+    for (const auto& SLOT : buttonSlots(Vector2D{(double)(int)assignedBoxGlobal().w, (double)HEIGHT}, 1.F)) {
+        const auto& BOX = SLOT.box;
+        if (VECINRECT(COORDS, BOX.x, BOX.y, BOX.x + BOX.w, BOX.y + BOX.h))
+            return;
+    }
+
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return;
+
+    // The default is resolved HERE and not as the config value's default:
+    // a config default cannot expand $HOME, and setting the key from bars.lua
+    // would make older builds of this fork fail the whole eval on an unknown
+    // key -- breaking theme application until the next login.
+    std::string cmd = g_pGlobalState->config.barMenuCommand->value();
+    if (cmd.empty()) {
+        const char* home = getenv("HOME");
+        if (!home)
+            return;
+        cmd = std::string{home} + "/.local/bin/os99-bar-menu";
+    }
+
+    Config::Supplementary::executor()->spawn(std::format("{} 0x{:x}", cmd, (uintptr_t)PWINDOW.get()));
 }
 
 void CHyprBar::onTouchDown(Event::SCallbackInfo& info, ITouch::SDownEvent e) {
@@ -1209,8 +1270,11 @@ void CHyprBar::keepShadeOnScreen() {
     if (!PWINDOW || !PWINDOW->m_isFloating)
         return; // still settling; does not count against the budget
 
+    // GOAL, not CURRENT: moves animate, and reading the animation's present
+    // frame re-issues the full correction against a position that has not
+    // caught up -- each attempt stacks another move. See keepBarBelowPanels.
     const auto HEIGHT = g_pGlobalState->config.barHeight->value();
-    const auto POS    = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+    const auto POS    = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
 
     Vector2D want = m_shadeRestorePos;
 
@@ -1236,11 +1300,70 @@ void CHyprBar::keepShadeOnScreen() {
         Log::logger->log(Log::ERR, "[hyprbars] shade: could not restore the bar's position");
 }
 
+// No floating window's title bar may sit under the status bar. The status bar
+// is a TOP-layer surface, and inputIsValid() yields to top layers -- so a bar
+// underneath it is not merely hidden, it is UNCLICKABLE, and the title bar is
+// the only handle a floating window has. OS 9 had the same rule for the same
+// reason: nothing goes over the menu bar.
+//
+// Same shape as keepShadeOnScreen, and for the same reasons: correcting from
+// the layout events that follow the move (a move issued inside the event that
+// caused it reads a stale position), with a small fixed budget so a move that
+// does not take can never become a per-frame loop. The budget resets when the
+// window is back in bounds, and handleUpEvent resets it on any mouse release --
+// so a SUPER+drag that parks a window under the status bar gets corrected the
+// moment the button is let go, not fought frame-by-frame during the drag.
+void CHyprBar::keepBarBelowPanels() {
+    if (m_bShaded || m_bDraggingThis) // shade has its own clamp; drags settle first
+        return;
+
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW || !validMapped(PWINDOW) || !PWINDOW->m_isFloating)
+        return;
+
+    if (m_hidden || !g_pGlobalState->config.enabled->value() || !PWINDOW->m_ruleApplicator->decorate().valueOrDefault())
+        return;
+
+    // A fullscreen window legitimately covers the whole output, status bar
+    // included; shoving it down would break fullscreen, not protect the bar.
+    if (Fullscreen::controller()->isFullscreen(PWINDOW))
+        return;
+
+    const auto PMONITOR = PWINDOW->m_monitor.lock();
+    if (!PMONITOR)
+        return;
+
+    // The window BOX starts below the title bar the frame reserves above it,
+    // so the floor is the reserved area's top edge plus the bar's height.
+    //
+    // GOAL, not CURRENT: moves animate, and CURRENT reports the animation's
+    // present frame. Reading it here re-issued the full correction against a
+    // position that had not caught up yet -- three attempts, three stacked
+    // moves, and the window landed 3x too low. The goal is where the window
+    // is actually headed, which is the thing the clamp is about.
+    const auto   HEIGHT = g_pGlobalState->config.barHeight->value();
+    const double floorY = PMONITOR->m_position.y + PMONITOR->m_reservedArea.top() + HEIGHT;
+    const auto   POS    = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+
+    if (POS.y >= floorY - 0.5) {
+        m_clampTries = 0;
+        return;
+    }
+
+    if (m_clampTries >= CLAMP_ATTEMPTS)
+        return;
+
+    ++m_clampTries;
+    if (!Config::Actions::move(Vector2D{0.0, floorY - POS.y}, true, PWINDOW))
+        Log::logger->log(Log::ERR, "[hyprbars] could not move the bar out from under the status bar");
+}
+
 void CHyprBar::updateWindow(PHLWINDOW pWindow) {
     if (barsShuttingDown())
         return;
 
     keepShadeOnScreen();
+    keepBarBelowPanels();
     syncFrameRounding();
     damageEntire();
 }

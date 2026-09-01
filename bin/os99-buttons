@@ -1,0 +1,141 @@
+#!/bin/bash
+# Which boxes the title bar shows, and the switch that changes it.
+#
+#   os99-buttons list            each box: on/off and which side it sits
+#   os99-buttons list --json     the same, for the right-click menu
+#   os99-buttons toggle <box>    flip one box and re-apply, live
+#   os99-buttons apply           re-apply the current config (art + buttons)
+#
+# The configuration lives in [buttons] left/right of os99-theme.toml --
+# corner-first per side, because the plugin fills buttons outward from their
+# own edge. This script edits ONLY those two lines and leaves the rest of the
+# file exactly as written, comments included.
+#
+# Applying goes through os99-theme-reload, which redraws the art and re-applies
+# the plugin settings through `hyprctl eval` -- no config reload, no plugin
+# unload, nothing that can take the compositor down.
+set -uo pipefail
+
+die() { echo "os99-buttons: $*" >&2; exit 1; }
+
+# The same chain the generator reads, in the same order, because editing a file
+# the generator then ignores would be a very quiet kind of broken.
+CFG=""
+for c in "${OS99_CONFIG:-}" \
+         "$HOME/.config/omarchy/os99-theme.toml" \
+         "$HOME/.config/os99/os99-theme.toml" \
+         "$HOME/.config/hypr/os99-theme.toml"; do
+  [[ -n $c && -f $c ]] && { CFG="$c"; break; }
+done
+[[ -n $CFG ]] || die "no os99-theme.toml found -- run os99-install first"
+
+command -v python3 >/dev/null 2>&1 || die "python3 not found"
+
+# list | list --json | toggle <box> -- all the toml logic in one place.
+buttons_py() {
+  python3 - "$CFG" "$@" <<'PY'
+import sys, tomllib, json, re
+
+GLYPHS = ("close", "zoom", "collapse", "shade", "float", "pin", "full", "kill")
+LABELS = {"close": "Close", "zoom": "Zoom", "collapse": "Collapse",
+          "shade": "Windowshade", "float": "Float", "pin": "Pin",
+          "full": "Fullscreen", "kill": "Force Quit"}
+# Where a box goes when toggled ON: close belongs alone on the left, the way
+# OS 9 had it; everything else joins the right side in canonical order.
+HOME_SIDE = {g: ("left" if g == "close" else "right") for g in GLYPHS}
+
+path, cmd = sys.argv[1], sys.argv[2]
+cfg = tomllib.load(open(path, "rb"))
+btn = cfg.get("buttons", {})
+left  = list(btn.get("left",  ["close"]))
+right = list(btn.get("right", ["zoom", "collapse"]))
+
+if cmd == "list":
+    rows = [{"id": g, "label": LABELS[g],
+             "on": g in left or g in right,
+             "side": "left" if g in left else ("right" if g in right else HOME_SIDE[g])}
+            for g in GLYPHS]
+    if len(sys.argv) > 3 and sys.argv[3] == "--json":
+        print(json.dumps({"buttons": rows}))
+    else:
+        for r in rows:
+            print(f"{'on ' if r['on'] else 'off'}  {r['id']:<9} {r['side']:<6} {r['label']}")
+    raise SystemExit(0)
+
+if cmd != "toggle":
+    raise SystemExit(f"unknown command {cmd!r}")
+g = sys.argv[3]
+if g not in GLYPHS:
+    raise SystemExit(f"no such box {g!r} -- one of: {', '.join(GLYPHS)}")
+
+if g in left or g in right:
+    left  = [x for x in left  if x != g]
+    right = [x for x in right if x != g]
+    state = "off"
+else:
+    # Insert in canonical order so the corners stay predictable: zoom keeps
+    # the top-right corner whenever it is on at all.
+    lst = left if HOME_SIDE[g] == "left" else right
+    order = [x for x in GLYPHS if HOME_SIDE[x] == HOME_SIDE[g]]
+    lst.append(g)
+    lst.sort(key=order.index)
+    state = "on"
+
+def fmt(lst):
+    return "[" + ", ".join(f'"{x}"' for x in lst) + "]"
+
+# Surgical edit: rewrite (or insert) just the left/right lines inside
+# [buttons]. tomllib has no writer, and round-tripping the whole file would
+# lose every comment in it.
+lines = open(path).read().splitlines(keepends=True)
+out, in_btn, done = [], False, {"left": False, "right": False}
+for ln in lines:
+    stripped = ln.strip()
+    if stripped.startswith("["):
+        if in_btn:  # leaving [buttons]: insert anything not yet written
+            for key in ("left", "right"):
+                if not done[key]:
+                    out.append(f"{key:<9} = {fmt(left if key == 'left' else right)}\n")
+        in_btn = stripped == "[buttons]"
+    if in_btn:
+        m = re.match(r"(\s*)(left|right)\s*=", ln)
+        if m:
+            key = m.group(2)
+            out.append(f"{m.group(1)}{key:<9} = {fmt(left if key == 'left' else right)}\n")
+            done[key] = True
+            continue
+    out.append(ln)
+if in_btn:
+    for key in ("left", "right"):
+        if not done[key]:
+            out.append(f"{key:<9} = {fmt(left if key == 'left' else right)}\n")
+if not any(l.strip() == "[buttons]" for l in lines):
+    out.append("\n[buttons]\n")
+    out.append(f"left      = {fmt(left)}\n")
+    out.append(f"right     = {fmt(right)}\n")
+open(path, "w").writelines(out)
+print(f"{g} {state}")
+PY
+}
+
+apply_live() {
+  command -v os99-theme-reload >/dev/null 2>&1 || {
+    echo "os99-buttons: changed $CFG; os99-theme-reload not found, apply skipped" >&2
+    return 0
+  }
+  os99-theme-reload >/dev/null 2>&1 || echo "os99-buttons: os99-theme-reload failed" >&2
+}
+
+case "${1:-list}" in
+  list)    buttons_py list "${2:-}" ;;
+  toggle)
+    [[ -n ${2:-} ]] || die "usage: os99-buttons toggle <box>"
+    buttons_py toggle "$2" || exit 1
+    apply_live
+    ;;
+  apply)   apply_live ;;
+  -h|--help|help)
+    sed -n '2,16p' "$0" | sed 's/^# \?//'
+    ;;
+  *) die "unknown command '$1' (list | toggle <box> | apply)" ;;
+esac

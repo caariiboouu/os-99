@@ -40,6 +40,7 @@ class CHyprBar : public IHyprWindowDecoration {
     void                               toggleShade();
     void                               minimizeWindow();
     void                               keepShadeOnScreen();
+    void                               keepBarBelowPanels();
 
     virtual void                       damageEntire();
 
@@ -81,6 +82,8 @@ class CHyprBar : public IHyprWindowDecoration {
     // to put the window back exactly as it was.
     bool                       m_bShaded            = false;
     int                        m_shadeFixTries      = 0;
+    // keepBarBelowPanels: attempts spent on the current out-of-bounds episode.
+    int                        m_clampTries         = 0;
     bool                       m_bShadeWasTiled     = false;
     Vector2D                   m_shadeRestoreSize;
     Vector2D                   m_shadeRestorePos;
@@ -113,6 +116,7 @@ class CHyprBar : public IHyprWindowDecoration {
     void onTouchMove(Event::SCallbackInfo& info, ITouch::SMotionEvent e);
 
     void handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
+    void handleContextDown(Event::SCallbackInfo& info);
     void handleUpEvent(Event::SCallbackInfo& info);
     void handleMovement();
     bool doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, bool BUTTONSRIGHT);

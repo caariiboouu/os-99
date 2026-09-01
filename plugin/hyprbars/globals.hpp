@@ -70,7 +70,7 @@ struct SGlobalState {
         SP<Config::Values::CIntValue>        barPadding;
         SP<Config::Values::CIntValue>        barButtonPadding;
         SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
-        SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick;
+        SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, barMenuCommand;
         SP<Config::Values::CStringValue>     barTexture, barTextureBorder;
         SP<Config::Values::CStringValue>     frameTexture, frameTextureBorder, frameInset;
         SP<Config::Values::CColorValue>      barClearColor;

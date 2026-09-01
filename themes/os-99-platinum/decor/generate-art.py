@@ -537,6 +537,46 @@ def titlebar(active, W=64, H=BAR_H):
     return p, W, H
 
 
+# Every box the title bar can carry. The art for ALL of them is emitted every
+# run -- the whole set is a few KB -- so toggling a box on later (os99-buttons,
+# or the right-click menu) never has to wait on a redraw.
+GLYPHS = ("close", "zoom", "collapse", "shade", "float", "pin", "full", "kill")
+
+# What each box DOES, as the fork's native dispatchers (barDeco.cpp,
+# runNativeDispatch). Native rather than shell: a native dispatch acts on the
+# window whose box was clicked, and "maximize" is the one form of expand that
+# keeps the title bar on screen to be clicked again.
+DISPATCH = {
+    "close":    "close",
+    "zoom":     "maximize",
+    "collapse": "minimize",
+    "shade":    "shade",
+    "float":    "float",
+    "pin":      "pin",
+    "full":     "fullscreen",   # hides the bar; deliberate, so opt-in only
+    "kill":     "kill",         # force quit; also opt-in only
+}
+
+# Which boxes this machine shows, corner-first per side (buttons fill outward
+# from their own edge in the plugin). The defaults are the OS 9 trio.
+BTN_LEFT  = list(_btn.get("left",  ["close"]))
+BTN_RIGHT = list(_btn.get("right", ["zoom", "collapse"]))
+_seen = set()
+for _side, _lst in (("left", BTN_LEFT), ("right", BTN_RIGHT)):
+    for _g in _lst:
+        if _g not in GLYPHS:
+            _bad(f"[buttons] {_side}", _g, f"is not one of: {', '.join(GLYPHS)}")
+        if _g in _seen:
+            _bad(f"[buttons] {_side}", _g, "appears twice across left/right")
+        _seen.add(_g)
+
+# The add() lines bars.lua carries -- built once, palette-independent.
+BTN_LUA = "\n".join(
+    f'  add("/bar_{_g}.png", "{_side}", "{DISPATCH[_g]}")'
+    for _side, _lst in (("left", BTN_LEFT), ("right", BTN_RIGHT))
+    for _g in _lst) or "  -- no boxes configured; os99-buttons or the menu can add them back"
+
+
 def box(kind, pressed, S=13):
     """OS 9 title-bar boxes, traced from Platinum9's close/maximize XPMs.
 
@@ -568,9 +608,11 @@ def box(kind, pressed, S=13):
     # --- zone 3: the gradient interior -------------------------------------
     i0, i1 = 3, S - 4
     span   = max(1, (i1 - i0) * 2)
+    def grad(x, y):
+        return mix(lo, hi, ((x - i0) + (y - i0)) / span)
     for y in range(i0, i1 + 1):
         for x in range(i0, i1 + 1):
-            p[(x, y)] = mix(lo, hi, ((x - i0) + (y - i0)) / span)
+            p[(x, y)] = grad(x, y)
 
     # --- zone 2: the inner lip ---------------------------------------------
     dish = DISH if DISH else mix(SHADOW, DEEP, 0.5)
@@ -596,7 +638,17 @@ def box(kind, pressed, S=13):
     p[(0, S - 1)] = FACE
 
     # --- glyphs ------------------------------------------------------------
+    # All rectilinear except the force-quit X: Platinum's chrome has no curves,
+    # and at bar size a diagonal only earns its place when it MEANS something.
     q = i0 + round((i1 - i0) * 0.55)
+    d = i1 - i0
+    def outline_rect(x0, y0, x1, y1):
+        for x in range(x0, x1 + 1):
+            p[(x, y0)] = OUTLINE
+            p[(x, y1)] = OUTLINE
+        for y in range(y0, y1 + 1):
+            p[(x0, y)] = OUTLINE
+            p[(x1, y)] = OUTLINE
     if kind == "zoom":
         # Not a free-floating square: two lines that, together with the box's
         # own top and left edges, close a small square in the UPPER-LEFT.
@@ -610,6 +662,41 @@ def box(kind, pressed, S=13):
         for m in (round(S * 0.43), round(S * 0.57)):
             for x in range(1, S - 1):
                 p[(x, m)] = OUTLINE
+    elif kind == "shade":
+        # ONE full-width rule: the bar a window rolls up into. One slat where
+        # collapse has two, so the pair stay tellable apart at bar size.
+        m = round(S * 0.5)
+        for x in range(1, S - 1):
+            p[(x, m)] = OUTLINE
+    elif kind == "float":
+        # Two overlapping window outlines, the front one occluding the back --
+        # a window lifted OUT of the tiling. The front interior is repainted
+        # with the gradient so the back square reads as behind, not through.
+        s_ = max(3, round(d * 0.62))
+        outline_rect(i0, i0, i0 + s_, i0 + s_)
+        for y in range(i1 - s_, i1 + 1):
+            for x in range(i1 - s_, i1 + 1):
+                p[(x, y)] = grad(x, y)
+        outline_rect(i1 - s_, i1 - s_, i1, i1)
+    elif kind == "pin":
+        # A solid square dead centre: the one glyph drawn filled, because a
+        # pinned window is the one state that does not move.
+        s_ = max(2, round(d * 0.42))
+        c0 = i0 + (d - s_ + 1) // 2
+        for y in range(c0, c0 + s_ + 1):
+            for x in range(c0, c0 + s_ + 1):
+                p[(x, y)] = OUTLINE
+    elif kind == "full":
+        # The whole interior outlined: as big as the box can draw a window.
+        # Distinct from zoom, whose square hangs off the top-left corner.
+        outline_rect(i0, i0, i1, i1)
+    elif kind == "kill":
+        # Force quit: the X. Two-pixel strokes or it vanishes into the hatch.
+        for t in range(d + 1):
+            for px_ in (i0 + t, i1 - t):
+                p[(px_, i0 + t)] = OUTLINE
+                if px_ + 1 <= i1:
+                    p[(px_ + 1, i0 + t)] = OUTLINE
     return p, S
 
 
@@ -646,8 +733,10 @@ for pal, d in TARGETS:
         for pressed, suffix in ((False, ""), (True, "_pressed")):
             q, S = box(kind, pressed)
             png(f"{d}/{name}{suffix}.png", S, S, q)
-    # Bar-sized boxes: drawn by the hyprbars fork into the title bar.
-    for kind in ("close", "zoom", "collapse"):
+    # Bar-sized boxes: drawn by the hyprbars fork into the title bar. The whole
+    # set is emitted, not just the configured ones, so toggling a box on later
+    # needs no redraw.
+    for kind in GLYPHS:
         for pressed, suffix in ((False, ""), (True, "_pressed")):
             q, S = box(kind, pressed, BOX_S)
             png(f"{d}/bar_{kind}{suffix}.png", S, S, q)
@@ -780,9 +869,13 @@ end
 -- The boxes. hyprbars clears its button list on every config reload and never
 -- repopulates ones added through the Lua API, so they have to be redeclared
 -- here or every reload empties the title bar. clear_buttons (a fork addition)
--- makes it idempotent. Close alone on the LEFT, collapse and zoom on the RIGHT;
--- buttons fill outward from their own edge, so zoom goes first to keep the
--- top-right corner it has held since System 7.
+-- makes it idempotent.
+--
+-- WHICH boxes appear comes from [buttons] left/right in os99-theme.toml,
+-- corner-first per side (buttons fill outward from their own edge). Toggle
+-- them with `os99-buttons`, or right-click a title bar. The default is the
+-- OS 9 trio: close alone on the LEFT, zoom then collapse on the RIGHT, zoom
+-- first to keep the top-right corner it has held since System 7.
 if have_plugin then
   hl.plugin.hyprbars.clear_buttons()
   local box = {{ bg_color = "rgb({CFG[pal]["face"]})", fg_color = "rgb({TEXTCOL})", size = {BOX_LOGICAL}, icon = "" }}
@@ -796,18 +889,7 @@ if have_plugin then
   -- it cannot ask for a maximise that keeps the decorations -- Hyprland's Lua
   -- fullscreen binding ignores its mode argument and always goes true
   -- fullscreen, which hides the very title bar you would click to undo it.
-  add("/bar_close.png",    "left",  "close")
-  add("/bar_zoom.png",     "right", "maximize")
-  -- Minimize: park the window on the os99-minimized workspace. Hyprland has no
-  -- minimize, and every in-place version of it hides the title bar you would
-  -- click to undo it. A parked window is never hidden from `hyprctl clients`,
-  -- so it is recoverable three ways: the bar widget, `os99-minimize restore`,
-  -- or simply switching to that workspace.
-  --
-  -- Windowshade still exists as hl.plugin.hyprbars.shade() for anyone who wants
-  -- to bind it. It is not on a box because floating a window to roll it up lets
-  -- Hyprland re-centre it, which can put the bar above the top of the screen.
-  add("/bar_collapse.png", "right", "minimize")
+{BTN_LUA}
 end
 """)
 
@@ -842,3 +924,5 @@ print(f"  shadow      right {_SH_RIGHT}px / bottom {_SH_BOTTOM}px,"
       f"   -> hyprland range {_SH_RANGE} offset ({_SH_RIGHT}, {_SH_BOTTOM})"
       + ("" if _SH_OK else "   <-- shadow_right/shadow_bottom must be >= 0"))
 print(f"  nine-patch  top {TOP} / side {SIDE} / bottom {SIDE}   art {W}x{H}")
+print(f"  boxes       left: {', '.join(BTN_LEFT) or '(none)'}   right: {', '.join(BTN_RIGHT) or '(none)'}"
+      f"   (all {len(GLYPHS)} drawn; toggle with os99-buttons)")

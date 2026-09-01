@@ -356,6 +356,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pGlobalState->config.enabled             = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Whether bars are enabled", false);
     g_pGlobalState->config.iconOnHover         = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:icon_on_hover", "Whether to use an icon on hover of the buttons", false);
     g_pGlobalState->config.onDoubleClick       = makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
+    // Empty means "the default": $HOME/.local/bin/os99-bar-menu, resolved at
+    // click time in barDeco.cpp. Hardcoding the default THERE rather than here
+    // matters -- a config default cannot expand $HOME, and naming the key from
+    // bars.lua would make every OLD build of this fork fail the whole eval on
+    // an unknown key, breaking theme application until the next login.
+    g_pGlobalState->config.barMenuCommand      = makeShared<Config::Values::CStringValue>(
+        "plugin:hyprbars:bar_menu_command", "Command spawned on right-click of bar face (not a button). The clicked window's address is appended. Empty runs ~/.local/bin/os99-bar-menu", "");
 
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barColor);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.textColor);
@@ -389,6 +396,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.enabled);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.iconOnHover);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.onDoubleClick);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barMenuCommand);
 
     if (Config::mgr()->type() == Config::CONFIG_LEGACY)
         HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});

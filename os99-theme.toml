@@ -90,6 +90,19 @@ shadow_opacity          = 60
 shadow_opacity_inactive = 22
 
 [buttons]
+# Which boxes the title bar shows, corner-first per side (the plugin fills
+# buttons outward from their own edge). Toggle with `os99-buttons` or by
+# right-clicking a title bar. The full set:
+#   close     the close box (plain)
+#   zoom      expand, keeping the title bar (a square off the top-left corner)
+#   collapse  minimize to the bar widget (two slats)
+#   shade     roll up to just the title bar (one slat)
+#   float     toggle floating (two overlapping windows)
+#   pin       pin a floating window (solid square)
+#   full      true fullscreen -- HIDES the title bar; opt-in for a reason
+#   kill      force quit (the X); also opt-in for a reason
+left      = ["close"]
+right     = ["zoom", "collapse"]
 size      = 14        # box is size x size; matches the hatch field height
 edge_pad  = 1         # gap from the window edge to the first box.
                       # Real OS 9 lines the box's OUTER edge up with the

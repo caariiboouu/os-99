@@ -65,7 +65,10 @@ else
   SRC="$HOME/.config/omarchy/themes/${CURRENT}"
   if [[ -d "$SRC/decor" ]]; then
     echo "==> copying art into the live theme"
-    cp -f "$SRC/decor/"*.png "$SRC/decor/bar.env" "$LIVE/decor/" 2>/dev/null || true
+    # bars.lua rides along: it carries the BUTTON LIST, and os99-window-bars
+    # evals the LIVE copy -- without this line a box toggled via os99-buttons
+    # applies on the next theme switch instead of now.
+    cp -f "$SRC/decor/"*.png "$SRC/decor/bar.env" "$SRC/decor/bars.lua" "$LIVE/decor/" 2>/dev/null || true
   fi
 fi
 
