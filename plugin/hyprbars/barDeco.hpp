@@ -135,6 +135,10 @@ class CHyprBar : public IHyprWindowDecoration {
     // Whether the window is currently IN the state this box toggles, read live
     // from the window so a change made by any other route still shows here.
     bool buttonLatched(const SHyprButton& button);
+    // Whether this box applies to the window at all -- pin does nothing to a
+    // tiled window, so it is not drawn on one.
+    bool buttonVisible(const SHyprButton& button);
+    bool windowInState(const std::string& state);
     // Where the tooltip sits, in global logical coordinates. Empty when none
     // is showing.
     CBox tooltipBoxGlobal();

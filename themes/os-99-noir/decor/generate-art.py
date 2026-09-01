@@ -587,6 +587,13 @@ ACTIVE_WHEN = {
     "full":  "fullscreen",
 }
 
+# A box only worth showing in a particular state. Pinning does nothing at all
+# to a tiled window, so the pin box waits until the window is floating rather
+# than sitting there inert.
+SHOW_WHEN = {
+    "pin": "floating",
+}
+
 # Which boxes this machine shows, corner-first per side (buttons fill outward
 # from their own edge in the plugin). The defaults are the OS 9 trio.
 BTN_LEFT  = list(_btn.get("left",  ["close"]))
@@ -610,7 +617,7 @@ for _g, (_t, _ta) in TOOLTIP.items():
 
 BTN_LUA = "\n".join(
     f'  add("/bar_{_g}.png", "{_side}", "{DISPATCH[_g]}",\n'
-    f'      "{TOOLTIP[_g][0]}", "{TOOLTIP[_g][1]}", "{ACTIVE_WHEN.get(_g, "")}")'
+    f'      "{TOOLTIP[_g][0]}", "{TOOLTIP[_g][1]}", "{ACTIVE_WHEN.get(_g, "")}", "{SHOW_WHEN.get(_g, "")}")'
     for _side, _lst in (("left", BTN_LEFT), ("right", BTN_RIGHT))
     for _g in _lst) or "  -- no boxes configured; os99-buttons or the menu can add them back"
 
@@ -681,9 +688,18 @@ def box(kind, pressed, S=13):
     q = i0 + round((i1 - i0) * 0.55)
     # THE GLYPH FIELD. One pixel inside the interior, so a mark never sits
     # shoulder to shoulder with the outline ring -- at 18px a 1px gap reads as
-    # no gap at all, and the whole set looked crowded down and to the right.
-    # zoom keeps the full interior: its square is SUPPOSED to touch the corner.
-    g0, g1 = i0 + 1, i1 - 1
+    # no gap at all. zoom keeps the full interior: its square is SUPPOSED to
+    # touch the corner.
+    #
+    # And a pixel MORE off the right and the bottom, because the box is not
+    # optically centred on its own middle. The frame is dark on the top and
+    # left (the dish runs straight into the outline) and light on the bottom
+    # and right (outline, then the highlight). So the dark shape the eye reads
+    # as "the button" spans 0..S-2, whose centre is half a pixel above and left
+    # of the geometric centre of 0..S-1. A mark centred on the geometry is
+    # therefore centred half a pixel low and right of where it is looked for,
+    # and at 18 device pixels half a pixel is a whole pixel of apparent drift.
+    g0, g1 = i0 + 1, i1 - 2
     d = g1 - g0
     def outline_rect(x0, y0, x1, y1):
         for x in range(x0, x1 + 1):
@@ -710,9 +726,18 @@ def box(kind, pressed, S=13):
         # miscounted.
         # Centred on the ring by construction rather than by two percentages
         # of S, which landed the pair half a pixel low at every size.
-        c_ = (2 + (S - 3)) / 2.0
-        for m in (int(round(c_ - 1.5)), int(round(c_ + 1.5))):
-            for x in range(1, S - 1):
+        c_ = (S - 2) // 2   # the optical centre, as above
+        for m in (c_ - 1, c_ + 1):
+            # 1..S-3, not 1..S-2: the slats run into the outline on both sides,
+            # and the outline's own dark reaches one pixel further at the top
+            # left than at the bottom right, so a span that looks even has to
+            # stop one short on the right.
+            # The left end disappears into the outline ring, which is already
+            # dark there, so the VISIBLE slat starts at 2. Stopping at S-4
+            # leaves the visible span 2..S-4, centred on the optical middle;
+            # running to the ring on the right instead would put it half a
+            # pixel right, which is the whole complaint.
+            for x in range(1, S - 3):
                 p[(x, m)] = OUTLINE
     elif kind == "collapse":
         # Minimize is not an OS 9 idea -- there was nowhere to minimize TO --
@@ -956,10 +981,10 @@ if have_plugin then
   -- fields are ignored by add_button, so this file stays loadable on a build
   -- that predates them -- unlike an unknown CONFIG key, which fails the whole
   -- eval and would strip the frame until the next login.
-  local function add(img, side, dispatch, tip, tip_on, latch)
+  local function add(img, side, dispatch, tip, tip_on, latch, only_when)
     hl.plugin.hyprbars.add_button({{ bg_color = box.bg_color, fg_color = box.fg_color,
       size = box.size, icon = "", image = D .. img, side = side, dispatch = dispatch,
-      tooltip = tip, tooltip_active = tip_on, active_when = latch }})
+      tooltip = tip, tooltip_active = tip_on, active_when = latch, show_when = only_when }})
   end
   -- `dispatch` runs the action IN THE PLUGIN, against this window. The shell
   -- form (`action = "hyprctl dispatch ..."`) still works but has two problems:

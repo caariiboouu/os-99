@@ -63,6 +63,11 @@ struct SHyprButton {
     // anything having to notify us.
     std::string          activeWhen    = "";
 
+    // The state the window must be in for this box to appear at all. Empty
+    // means always. Pin uses "floating": pinning a tiled window does nothing,
+    // and a box that does nothing is worse than no box.
+    std::string          showWhen      = "";
+
     // The dished-in art, drawn while the box is latched: a latched control is
     // held down, which is how every toggle in this era showed itself. Loaded
     // from <image>_pressed.png and keyed on mtime exactly like imageTex, so a

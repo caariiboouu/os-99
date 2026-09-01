@@ -292,6 +292,13 @@ int newLuaButton(lua_State* L) {
             button.activeWhen = lua_tostring(L, -1);
     }
 
+    {
+        Hyprutils::Utils::CScopeGuard x([L] { lua_pop(L, 1); });
+        lua_getfield(L, 1, "show_when");
+        if (lua_isstring(L, -1))
+            button.showWhen = lua_tostring(L, -1);
+    }
+
     if (button.cmd.empty() && button.dispatch.empty())
         return Config::Lua::Bindings::Internal::configError(L, "add_button: needs either action (a shell command) or dispatch (a native dispatcher name)");
 

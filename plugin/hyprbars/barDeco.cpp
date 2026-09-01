@@ -577,7 +577,14 @@ void CHyprBar::runNativeDispatch(const std::string& what) {
     else if (what == "maximize")
         REPORT(fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, true, PWINDOW));
     else if (what == "fullscreen")
-        REPORT(fullscreenWindow(Fullscreen::FSMODE_FULLSCREEN, true, PWINDOW));
+        // INTERNAL maximized, CLIENT fullscreen. True fullscreen hands the
+        // whole output to the window and Hyprland draws no decoration on it --
+        // so the box that got you there is gone, and the only way back is a
+        // keybind you have to already know. Holding the window at MAXIMIZED
+        // internally keeps the title bar, while telling the CLIENT it is
+        // fullscreen still gets the app's own fullscreen behaviour. The box
+        // stays on screen and undoes itself.
+        REPORT(fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, Fullscreen::FSMODE_FULLSCREEN, true, PWINDOW));
     else if (what == "float")
         REPORT(floatWindow(TOGGLE_ACTION_TOGGLE, PWINDOW));
     else if (what == "pin")
@@ -806,6 +813,10 @@ std::vector<CHyprBar::SButtonSlot> CHyprBar::buttonSlots(const Vector2D& barSize
 
     for (size_t i = 0; i < g_pGlobalState->buttons.size(); ++i) {
         const auto& BUTTON  = g_pGlobalState->buttons[i];
+
+        if (!buttonVisible(BUTTON))
+            continue;
+
         const bool  ONRIGHT = BUTTON.side.empty() ? DEFAULTRIGHT : BUTTON.side == "right";
         const float SIZE    = BUTTON.size * scale;
         const float PAD     = BARBUTTONPADDING * scale;
@@ -863,8 +874,10 @@ static std::string pressedImagePath(const std::string& image) {
     return image.substr(0, DOT) + "_pressed" + image.substr(DOT);
 }
 
-bool CHyprBar::buttonLatched(const SHyprButton& button) {
-    if (button.activeWhen.empty())
+// Is this window in the named state right now? Read live, never stored, so a
+// change made by a keybind or by the window itself is reflected everywhere.
+bool CHyprBar::windowInState(const std::string& state) {
+    if (state.empty())
         return false;
 
     const auto PWINDOW = m_pWindow.lock();
@@ -873,27 +886,38 @@ bool CHyprBar::buttonLatched(const SHyprButton& button) {
 
     // Shade is ours -- Hyprland has no idea a window is rolled up -- so it is
     // the one state read off the bar rather than off the window.
-    if (button.activeWhen == "shaded")
+    if (state == "shaded")
         return m_bShaded;
 
-    if (button.activeWhen == "floating")
+    if (state == "floating")
         return PWINDOW->m_isFloating;
 
-    if (button.activeWhen == "pinned")
+    if (state == "pinned")
         return PWINDOW->m_pinned;
 
-    // INTERNAL mode, not client: it is the mode Hyprland is actually holding
-    // the window in, which is what the box toggles. A client asking politely
-    // for fullscreen it did not get would otherwise latch the box.
     const auto MODES = Fullscreen::controller()->getFullscreenModes(PWINDOW);
 
-    if (button.activeWhen == "maximized")
-        return MODES.internal == Fullscreen::FSMODE_MAXIMIZED;
+    // The two expand boxes are told apart by the CLIENT mode. Both hold the
+    // window at MAXIMIZED internally -- that is what keeps the title bar on
+    // screen -- and the fullscreen box is the one that additionally tells the
+    // client it is fullscreen.
+    if (state == "maximized")
+        return MODES.internal == Fullscreen::FSMODE_MAXIMIZED && MODES.client != Fullscreen::FSMODE_FULLSCREEN;
 
-    if (button.activeWhen == "fullscreen")
-        return MODES.internal == Fullscreen::FSMODE_FULLSCREEN;
+    if (state == "fullscreen")
+        return MODES.client == Fullscreen::FSMODE_FULLSCREEN || MODES.internal == Fullscreen::FSMODE_FULLSCREEN;
 
     return false;
+}
+
+bool CHyprBar::buttonLatched(const SHyprButton& button) {
+    return windowInState(button.activeWhen);
+}
+
+// A box that cannot do anything is worse than no box: pin does nothing at all
+// to a tiled window, so it does not appear on one.
+bool CHyprBar::buttonVisible(const SHyprButton& button) {
+    return button.showWhen.empty() || windowInState(button.showWhen);
 }
 
 void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a) {
@@ -1618,15 +1642,11 @@ void CHyprBar::renderTooltipInner(PHLMONITOR pMonitor, const float a) {
 
     const auto BAR = assignedBoxGlobal();
 
-    double centre = BAR.x + BAR.w / 2.0;
-    for (const auto& SLOT : buttonSlots(Vector2D{(double)(int)BAR.w, (double)HEIGHT}, 1.F)) {
-        if ((int)SLOT.index == m_hoveredButton) {
-            centre = BAR.x + SLOT.box.x + SLOT.box.w / 2.0;
-            break;
-        }
-    }
-
-    double     x     = centre - W / 2.0;
+    // Anchored on the POINTER. Anchoring on the middle of the box meant that
+    // whenever the clamp had to move the tooltip -- which is every box near an
+    // edge -- it slid away from the thing being pointed at and ended up out in
+    // the middle of the bar, apparently belonging to nothing.
+    double     x     = g_pInputManager->getMouseCoordsInternal().x - W / 2.0;
     double     y     = BAR.y + BAR.h + GAP;
 
     const auto FRAME = frameBoxGlobal();
