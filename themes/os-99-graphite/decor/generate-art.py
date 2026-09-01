@@ -679,7 +679,12 @@ def box(kind, pressed, S=13):
     # All rectilinear except the force-quit X: Platinum's chrome has no curves,
     # and at bar size a diagonal only earns its place when it MEANS something.
     q = i0 + round((i1 - i0) * 0.55)
-    d = i1 - i0
+    # THE GLYPH FIELD. One pixel inside the interior, so a mark never sits
+    # shoulder to shoulder with the outline ring -- at 18px a 1px gap reads as
+    # no gap at all, and the whole set looked crowded down and to the right.
+    # zoom keeps the full interior: its square is SUPPOSED to touch the corner.
+    g0, g1 = i0 + 1, i1 - 1
+    d = g1 - g0
     def outline_rect(x0, y0, x1, y1):
         for x in range(x0, x1 + 1):
             p[(x, y0)] = OUTLINE
@@ -703,7 +708,10 @@ def box(kind, pressed, S=13):
         # windowshade with an invented one-slat mark -- and one slat against
         # two is not a different icon at 18 device pixels, it is the same icon
         # miscounted.
-        for m in (round(S * 0.43), round(S * 0.57)):
+        # Centred on the ring by construction rather than by two percentages
+        # of S, which landed the pair half a pixel low at every size.
+        c_ = (2 + (S - 3)) / 2.0
+        for m in (int(round(c_ - 1.5)), int(round(c_ + 1.5))):
             for x in range(1, S - 1):
                 p[(x, m)] = OUTLINE
     elif kind == "collapse":
@@ -713,26 +721,29 @@ def box(kind, pressed, S=13):
         # Nothing else in the set touches the bottom edge, so it cannot be
         # taken for the windowshade slats.
         h_ = max(2, round(d * 0.22))
-        for y in range(i1 - h_ + 1, i1 + 1):
-            for x in range(i0, i1 + 1):
+        for y in range(g1 - h_ + 1, g1 + 1):
+            for x in range(g0, g1 + 1):
                 p[(x, y)] = OUTLINE
     elif kind == "float":
         # Two overlapping window outlines, the front one occluding the back --
         # a window lifted OUT of the tiling. The front interior is repainted
         # with the gradient so the back square reads as behind, not through.
         s_ = max(3, round(d * 0.62))
-        outline_rect(i0, i0, i0 + s_, i0 + s_)
-        for y in range(i1 - s_, i1 + 1):
-            for x in range(i1 - s_, i1 + 1):
+        outline_rect(g0, g0, g0 + s_, g0 + s_)
+        for y in range(g1 - s_, g1 + 1):
+            for x in range(g1 - s_, g1 + 1):
                 p[(x, y)] = grad(x, y)
-        outline_rect(i1 - s_, i1 - s_, i1, i1)
+        outline_rect(g1 - s_, g1 - s_, g1, g1)
     elif kind == "pin":
         # A solid square dead centre: the one glyph drawn filled, because a
         # pinned window is the one state that does not move.
-        s_ = max(2, round(d * 0.42))
-        c0 = i0 + (d - s_ + 1) // 2
-        for y in range(c0, c0 + s_ + 1):
-            for x in range(c0, c0 + s_ + 1):
+        field = d + 1
+        size  = max(2, round(field * 0.42))
+        if (field - size) % 2:
+            size += 1
+        c0 = g0 + (field - size) // 2
+        for y in range(c0, c0 + size):
+            for x in range(c0, c0 + size):
                 p[(x, y)] = OUTLINE
     elif kind == "full":
         # Four corner brackets: the mark for "push the edges all the way out".
@@ -742,17 +753,23 @@ def box(kind, pressed, S=13):
         # this set nobody can afford to make.
         arm = max(2, round(d * 0.34))
         for t in range(arm + 1):
-            p[(i0 + t, i0)] = p[(i0, i0 + t)] = OUTLINE
-            p[(i1 - t, i0)] = p[(i1, i0 + t)] = OUTLINE
-            p[(i0 + t, i1)] = p[(i0, i1 - t)] = OUTLINE
-            p[(i1 - t, i1)] = p[(i1, i1 - t)] = OUTLINE
+            p[(g0 + t, g0)] = p[(g0, g0 + t)] = OUTLINE
+            p[(g1 - t, g0)] = p[(g1, g0 + t)] = OUTLINE
+            p[(g0 + t, g1)] = p[(g0, g1 - t)] = OUTLINE
+            p[(g1 - t, g1)] = p[(g1, g1 - t)] = OUTLINE
     elif kind == "kill":
-        # Force quit: the X. Two-pixel strokes or it vanishes into the hatch.
+        # Force quit: the X. Two-pixel strokes or it vanishes into the hatch --
+        # but each diagonal is thickened AWAY from the other. Thickening both
+        # of them rightwards, as this did, puts every stroke half a pixel right
+        # and the whole X reads as leaning.
         for t in range(d + 1):
-            for px_ in (i0 + t, i1 - t):
-                p[(px_, i0 + t)] = OUTLINE
-                if px_ + 1 <= i1:
-                    p[(px_ + 1, i0 + t)] = OUTLINE
+            y = g0 + t
+            for x in (g0 + t, g0 + t + 1):
+                if x <= g1:
+                    p[(x, y)] = OUTLINE
+            for x in (g1 - t, g1 - t - 1):
+                if x >= g0:
+                    p[(x, y)] = OUTLINE
     return p, S
 
 

@@ -698,6 +698,7 @@ void CHyprBar::toggleShade() {
 
         m_bShaded        = true;
         m_shadeFixTries  = 0;
+        m_clampTries     = 0;
     } else {
         REPORT("resize", resize(m_shadeRestoreSize, false, PWINDOW));
         REPORT("move", move(m_shadeRestorePos, false, PWINDOW));
@@ -1420,7 +1421,14 @@ void CHyprBar::keepShadeOnScreen() {
 // so a SUPER+drag that parks a window under the status bar gets corrected the
 // moment the button is let go, not fought frame-by-frame during the drag.
 void CHyprBar::keepBarBelowPanels() {
-    if (m_bShaded || m_bDraggingThis) // shade has its own clamp; drags settle first
+    // Shaded windows are the ones that MOST need this. A rolled-up window is
+    // nothing but its title bar, so a bar under the status bar is the whole
+    // window gone -- and keepShadeOnScreen alone does not cover it: that one
+    // aims at the pre-shade position and spends a small fixed budget, after
+    // which Hyprland is free to re-centre the window under the panel and
+    // nothing puts it back. This floor has its own budget that RESETS as soon
+    // as the window is legal again, so it keeps working.
+    if (m_bDraggingThis) // a drag settles first; handleUpEvent re-checks
         return;
 
     const auto PWINDOW = m_pWindow.lock();
