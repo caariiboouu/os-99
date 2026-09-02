@@ -16,6 +16,10 @@
 # unload, nothing that can take the compositor down.
 set -uo pipefail
 
+_os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
+# shellcheck source=os99-lib.sh
+source "$_os99_lib" || { echo "os99-buttons: missing $_os99_lib" >&2; exit 1; }
+
 die() { echo "os99-buttons: $*" >&2; exit 1; }
 
 # The same chain the generator reads, in the same order, because editing a file
@@ -34,56 +38,7 @@ command -v python3 >/dev/null 2>&1 || die "python3 not found"
 # list | list --json | toggle <box> -- all the toml logic in one place.
 buttons_py() {
   python3 - "$CFG" "$@" <<'PY'
-import sys, tomllib, json, re, os, stat, tempfile
-
-# Follow a deliberate symlink ONCE and then work on the file it names. Two
-# reasons, and they point the same way: people keep this file in a dotfiles
-# repository and link it into place, and os.replace() onto a symlink would
-# replace the LINK rather than the file, quietly detaching it. Resolving first
-# keeps the link, and it also means every later open and rename names a real
-# path that no longer has a symlink in its final component to swap out.
-def resolved(p):
-    return os.path.realpath(p)
-
-def read_text(p):
-    fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd, "r", encoding="utf-8") as fh:
-        return fh.read()
-
-def publish(p, text):
-    """Replace p's contents with text, or leave p exactly as it was.
-
-    A config file is read by a hook, by the generator and by this script, and a
-    half-written one is worse than an unchanged one -- so the new text is
-    written to a private randomly named file beside it (mkstemp: O_EXCL, mode
-    0600, a name nothing can predict and so nothing can pre-plant), forced to
-    disk, and moved into place with a rename, which is atomic. A reader either
-    sees all of the old file or all of the new one. If anything fails, the
-    temporary file goes and p is untouched."""
-    d = os.path.dirname(p) or "."
-    mode = stat.S_IMODE(os.stat(p).st_mode)
-    fd, tmp = tempfile.mkstemp(prefix=".os99-theme.", suffix=".toml.tmp", dir=d)
-    try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, p)
-        tmp = None
-    finally:
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-    # The rename is only durable once the DIRECTORY entry is; without this a
-    # crash can leave the old file back.
-    dfd = os.open(d, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+import sys, tomllib, json, re, os
 
 GLYPHS = ("close", "zoom", "collapse", "shade", "float", "pin", "full", "kill")
 LABELS = {"close": "Close", "zoom": "Zoom", "collapse": "Collapse",
@@ -97,7 +52,17 @@ LABELS = {"close": "Close", "zoom": "Zoom", "collapse": "Collapse",
 # keeps the corner and kill lands inboard of it.
 HOME_SIDE = {g: ("left" if g in ("close", "kill") else "right") for g in GLYPHS}
 
-path, cmd = resolved(sys.argv[1]), sys.argv[2]
+
+def read_text(p):
+    fd = os.open(p, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+# Follow a deliberate symlink once and work on the file it names: people keep
+# this in a dotfiles repository, and the publisher renames onto the resolved
+# path too, so the link survives.
+path, cmd = os.path.realpath(sys.argv[1]), sys.argv[2]
 cfg = tomllib.loads(read_text(path))
 btn = cfg.get("buttons", {})
 left  = list(btn.get("left",  ["close"]))
@@ -166,29 +131,22 @@ if not any(l.strip() == "[buttons]" for l in lines):
     out.append("\n[buttons]\n")
     out.append(f"left      = {fmt(left)}\n")
     out.append(f"right     = {fmt(right)}\n")
-publish(path, "".join(out))
-print(f"{g} {state}")
+# Print the file this wants to be; the caller publishes it. The one bit of
+# news -- which way the box went -- rides on the exit status, so stdout can be
+# the file and nothing else.
+sys.stdout.write("".join(out))
+raise SystemExit(0 if state == "on" else 10)
 PY
 }
 
-# os99-theme-reload is what turns an edited config into a redrawn bar. Look for
-# it BESIDE this script first: the right-click menu runs this copy out of the
-# installed plugin directory, and the shell process's PATH is not a login
-# shell's -- it does not necessarily carry ~/.local/bin, and relying on it would
-# mean the menu edited the config and then quietly failed to apply it. Sibling,
-# then the usual install location, then PATH.
-find_reload() {
-  local here candidate
-  here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || here=""
-  for candidate in "$here/os99-theme-reload" "$HOME/.local/bin/os99-theme-reload"; do
-    [[ -n $candidate && -x $candidate ]] && { printf '%s\n' "$candidate"; return 0; }
-  done
-  command -v os99-theme-reload 2>/dev/null
-}
-
+# os99-theme-reload is what turns an edited config into a redrawn bar, and it
+# is looked for BESIDE this script first: the right-click menu runs this copy
+# out of the installed plugin directory, and the shell process's PATH is not a
+# login shell's. Relying on it would mean the menu edited the config and then
+# quietly failed to apply it.
 apply_live() {
   local reload
-  reload=$(find_reload)
+  reload=$(os99_sibling os99-theme-reload)
   [[ -n $reload ]] || {
     echo "os99-buttons: changed $CFG; os99-theme-reload not found, apply skipped" >&2
     return 0
@@ -200,7 +158,19 @@ case "${1:-list}" in
   list)    buttons_py list "${2:-}" ;;
   toggle)
     [[ -n ${2:-} ]] || die "usage: os99-buttons toggle <box>"
-    buttons_py toggle "$2" || exit 1
+    # The edit and the writing of it are separate jobs: buttons_py decides what
+    # the file should say, os99_publish makes that true atomically. Exit 10
+    # means the box went off and 0 means on, so stdout carries only the file.
+    new_toml=$(buttons_py toggle "$2"); rc=$?
+    case $rc in
+      0)  state=on ;;
+      10) state=off ;;
+      *)  exit 1 ;;
+    esac
+    # The newline is restored deliberately: $( ) strips every trailing newline,
+    # and a config file that lost its last one round-trips as a diff forever.
+    printf '%s\n' "$new_toml" | os99_publish "$CFG" || die "could not write $CFG"
+    echo "$2 $state"
     apply_live
     ;;
   apply)   apply_live ;;

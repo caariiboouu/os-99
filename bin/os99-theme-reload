@@ -20,6 +20,10 @@
 # no plugin unload, nothing that can take the compositor down.
 set -euo pipefail
 
+_os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
+# shellcheck source=os99-lib.sh
+source "$_os99_lib" || { echo "os99-theme-reload: missing $_os99_lib" >&2; exit 1; }
+
 GEN="$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py"
 LIVE="$HOME/.local/state/omarchy/current/theme"
 HOOK="$HOME/.local/bin/os99-window-bars"
@@ -31,8 +35,9 @@ case "${1:-}" in
   *)     echo "usage: os99-theme-reload [light|dark]" >&2; exit 2 ;;
 esac
 
-[[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || \
-  export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR}/hypr" 2>/dev/null | head -1)
+# A Hyprland that answers, not the newest directory: those outlive the
+# compositors that made them.
+os99_use_hyprland || true
 
 echo "==> redrawing art"
 python3 "$GEN"

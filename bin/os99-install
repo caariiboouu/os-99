@@ -28,6 +28,12 @@
 # the entire window frame at the wrong size.
 set -uo pipefail
 
+# Everything shared lives in one file beside this one: which Hyprland is
+# actually listening, where state goes, how a config file is published.
+_os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
+# shellcheck source=os99-lib.sh
+source "$_os99_lib" || { echo "os99-install: missing $_os99_lib" >&2; exit 1; }
+
 CHECK=false
 AUTO=false
 STATUS=false
@@ -66,31 +72,32 @@ note() { printf '  \033[33mnote\033[0m  %s\n' "$*"; warn=$((warn+1)); }
 bad()  { printf '  \033[31mmiss\033[0m  %s\n' "$*"; fail=$((fail+1)); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
-[[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || \
-  export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr" 2>/dev/null | head -1)
+# A compositor that answers, or none at all. --status and --check are useful
+# without one; everything else says what it cannot reach rather than talking to
+# a socket nobody is listening on.
+os99_use_hyprland || true
 
 # shell.json is the user's file and it is not reconstructible from anything
 # else -- a previous session emptied it and took seven widgets with it. So every
 # read and every write goes through one program, and that program never writes
-# shell.json in place: it writes a private randomly named file beside it
-# (mkstemp, O_EXCL, mode 0600, so nothing can be pre-planted at a name we are
-# about to use), forces it to disk, and renames it over the original, which is
-# atomic. A reader sees the whole old file or the whole new one, never half of
-# either, and an interrupted run leaves the original exactly as it was.
+# anything: it prints the file it wants, and os99_publish puts it there
+# atomically. The split is the point. The part that knows about bar layouts
+# cannot get the durability wrong, and the part that knows about durability is
+# the same one every other OS 99 script uses.
 #
 #   shelljson has-old            -> 0 if a merged-away j.os99-* widget is listed
-#   shelljson drop-old           remove them
 #   shelljson has <id>           -> 0 if <id> is in the bar layout
-#   shelljson add <id>           put <id> at the front of the right section
-#   shelljson remove <id>        take it back out of every section
+#   shelljson_write drop-old     remove the merged-away widgets
+#   shelljson_write add <id>     put <id> at the front of the right section
+#   shelljson_write remove <id>  take it out of every section
 shelljson() {
   python3 - "$SHELLJSON" "$@" <<'PYEOF'
-import json, os, stat, sys, tempfile
+import json, os, sys
 
 OLD = {"j.os99-font", "j.os99-minimized"}
 
-# Follow a symlink once, then work on what it names: people keep shell.json in a
-# dotfiles repository, and renaming over the link would detach it.
+# Follow a symlink once, then read what it names: people keep shell.json in a
+# dotfiles repository, and the publisher renames onto the resolved path too.
 path = os.path.realpath(sys.argv[1])
 cmd = sys.argv[2]
 
@@ -101,32 +108,11 @@ lay = d.get("bar", {}).get("layout", {})
 listed = [w.get("id") for sec in lay.values() for w in sec]
 
 
-def publish():
-    dirname = os.path.dirname(path) or "."
-    mode = stat.S_IMODE(os.stat(path).st_mode)
-    tfd, tmp = tempfile.mkstemp(prefix=".os99-shell.", suffix=".json.tmp", dir=dirname)
-    try:
-        os.fchmod(tfd, mode)
-        with os.fdopen(tfd, "w", encoding="utf-8") as fh:
-            # Match the file's own formatting exactly -- one-space indent,
-            # sorted keys, and NO trailing newline -- so this shows up as a
-            # one-line diff rather than a rewrite of the whole file.
-            json.dump(d, fh, indent=1, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-        tmp = None
-    finally:
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-    dfd = os.open(dirname, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+def emit():
+    # Match the file's own formatting exactly -- one-space indent, sorted keys,
+    # and NO trailing newline -- so this shows up as a one-line diff rather than
+    # a rewrite of the whole file.
+    json.dump(d, sys.stdout, indent=1, sort_keys=True)
 
 
 if cmd == "has-old":
@@ -138,13 +124,13 @@ if cmd == "has":
 if cmd == "drop-old":
     for sec in lay:
         lay[sec] = [w for w in lay[sec] if w.get("id") not in OLD]
-    publish()
+    emit()
     sys.exit(0)
 
 if cmd == "remove":
     for sec in lay:
         lay[sec] = [w for w in lay[sec] if w.get("id") != sys.argv[3]]
-    publish()
+    emit()
     sys.exit(0)
 
 if cmd == "add":
@@ -152,28 +138,21 @@ if cmd == "add":
     # Front of the right section. The widget is only visible when something IS
     # minimized, so the position is mostly cosmetic.
     sec.insert(0, {"id": sys.argv[3]})
-    publish()
+    emit()
     sys.exit(0)
 
 sys.exit(2)
 PYEOF
 }
 
+shelljson_write() {
+  local out
+  out=$(shelljson "$@") || return 1
+  printf '%s' "$out" | os99_publish "$SHELLJSON"
+}
+
 # ALWAYS back up before a write. The layout is not reconstructible.
 backup_shelljson() { cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"; }
-
-# A companion script, found BESIDE this one first. The widget runs the copy in
-# the plugin directory, and the shell process's PATH is not a login shell's --
-# it does not necessarily carry ~/.local/bin. Sibling, then the usual install
-# location, then PATH.
-sibling_or_path() {
-  local here candidate
-  here=$(cd -- "$(dirname -- "$(readlink -f "$0")")" && pwd) || here=""
-  for candidate in "$here/$1" "$HOME/.local/bin/$1"; do
-    [[ -n $candidate && -x $candidate ]] && { printf '%s\n' "$candidate"; return 0; }
-  done
-  command -v "$1" 2>/dev/null
-}
 
 # Where this came from, for hyprpm. The plugin directory left by
 # `omarchy plugin add` is a git checkout, so it knows its own origin; the
@@ -317,7 +296,7 @@ if $REMOVE; then
   head_ "Files"
   if [[ -f $SHELLJSON ]] && shelljson has "$PLUGIN_ID" 2>/dev/null; then
     backup_shelljson
-    shelljson remove "$PLUGIN_ID" && good "widget off the status bar (backup written)" \
+    shelljson_write remove "$PLUGIN_ID" && good "widget off the status bar (backup written)" \
       || bad "could not edit shell.json"
   else
     good "widget was not on the status bar"
@@ -437,7 +416,7 @@ else
       # these along by itself; this is the other route saying the same thing.
       # os99-install itself goes too: the widget offers to finish the setup,
       # and it can only do that if the thing that finishes it is beside it.
-      for h in os99-run os99-minimize os99-buttons os99-menubar-font \
+      for h in os99-lib.sh os99-run os99-minimize os99-buttons os99-menubar-font \
                os99-theme-reload os99-install os99-window-bars os99-hyprbars-rebuild; do
         install -m755 "$REPO/bin/$h" "$plugdir/bin/$h"
       done
@@ -605,7 +584,7 @@ head_ "Shell plugins"
 if [[ -f $SHELLJSON ]] && ! $CHECK; then
   if shelljson has-old 2>/dev/null; then
     backup_shelljson
-    if shelljson drop-old
+    if shelljson_write drop-old
     then note "removed old j.os99-* widgets from shell.json (backup written)"
     else bad "could not remove old j.os99-* entries from shell.json"; fi
   fi
@@ -632,7 +611,7 @@ register_bar_widget() {
   fi
 
   backup_shelljson
-  if shelljson add "$id"
+  if shelljson_write add "$id"
   then good "$id: added to shell.json (backup written)"
   else bad "$id: could not edit shell.json -- add {\"id\": \"$id\"} to bar.layout yourself"; fi
 }
@@ -647,8 +626,8 @@ head_ "hyprbars fork"
 if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   good "loaded"
 elif $AUTO && [[ -r $HOME/.local/lib/libhyprbars-os99.path ]] \
-     && [[ -n $(sibling_or_path os99-window-bars) ]] \
-     && "$(sibling_or_path os99-window-bars)" >/dev/null 2>&1 \
+     && [[ -n $(os99_sibling os99-window-bars) ]] \
+     && "$(os99_sibling os99-window-bars)" >/dev/null 2>&1 \
      && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   # A build already on disk that simply is not loaded costs a second to try,
   # and compiling Hyprland's headers costs minutes. Try the cheap one first.
