@@ -85,9 +85,18 @@ os99_state_dir() {
 # exits 0 even when the shell, the target or the method is missing. It is
 # useless as a probe. This deliberately does not use it.
 os99_widget_loaded() {
+  local try
   command -v omarchy-shell >/dev/null 2>&1 || return 2
   [[ -n $(pgrep -x quickshell 2>/dev/null) ]] || return 2
-  [[ $(timeout 5 omarchy-shell os99 ping 2>/dev/null) == ok ]]
+  # Three tries, because one silence is not an answer. A shell in the middle of
+  # applying a theme has better things to do than answer an IPC call, and a
+  # single timeout there would report the widget as broken in the middle of the
+  # very run that installs it.
+  for try in 1 2 3; do
+    [[ $(timeout 5 omarchy-shell os99 ping 2>/dev/null) == ok ]] && return 0
+    sleep 1
+  done
+  return 1
 }
 
 # ----------------------------------------------------------------- helpers
