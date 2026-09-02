@@ -90,9 +90,10 @@ The same steps, if you would rather run them yourself:
 
 ```
 # 1. the compositor plugin that draws the frames
+hyprpm update                 # builds Hyprland's headers; slow, and only once
 hyprpm add https://github.com/caariiboouu/os-99
 hyprpm enable hyprbars-os99
-hyprpm reload -n
+hyprpm reload
 
 # 2. the theme, the art, the hooks and the bar widget
 omarchy plugin add https://github.com/caariiboouu/os-99 --enable
@@ -101,6 +102,13 @@ omarchy plugin add https://github.com/caariiboouu/os-99 --enable
 # 3. wear it
 omarchy theme set "OS 99 Platinum"
 ```
+
+`hyprpm update` is not optional and not a nicety: hyprpm keeps a tree of
+Hyprland headers built from source, and `hyprpm add` refuses outright — *Headers
+outdated, please run hyprpm update* — when they are missing. On a machine that
+has never used hyprpm they always are, which is to say on every machine
+installing this for the first time. It is the slow step; the ones after it take
+seconds.
 
 `os99-install --auto` does 2 and 3, and 1 as well when no hyprbars is loaded —
 it is what the button runs. A plain `git clone` works too: run

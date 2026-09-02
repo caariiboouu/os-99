@@ -501,22 +501,36 @@ if $REMOVE; then
 
   head_ "Plugin"
   if command -v omarchy >/dev/null 2>&1 && [[ -d $HOME/.config/omarchy/plugins/$PLUGIN_ID ]]; then
-    if omarchy plugin remove "$PLUGIN_ID" --yes >/dev/null 2>&1; then
+    rm_log="$(mktemp)"
+    if omarchy plugin remove "$PLUGIN_ID" --yes >"$rm_log" 2>&1; then
       good "plugin removed"
     else
-      bad "could not remove the plugin -- run: omarchy plugin remove $PLUGIN_ID"
+      bad "could not remove the plugin:"
+      tail -3 "$rm_log" | sed 's/^/      /'
+      say "      omarchy plugin remove $PLUGIN_ID"
     fi
+    rm -f "$rm_log"
   else
     good "plugin was not installed"
   fi
 
   os99_session_end
   head_ "Left for you"
-  say "The compositor plugin is still loaded. Unloading it restarts the window"
-  say "frames, so it is yours to time:"
-  say ""
-  say "      hyprpm disable hyprbars-os99"
-  say "      hyprpm remove $(repo_url)"
+  if ! hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+    good "the frame plugin is already unloaded"
+  else
+    # Which command depends on who loaded it, and guessing wrong sends somebody
+    # to a hyprpm that has never heard of this plugin.
+    say "The frame plugin is still loaded. Unloading it takes the window frames"
+    say "with it, so it is yours to time:"
+    say ""
+    if hyprpm list 2>/dev/null | grep -q hyprbars-os99; then
+      say "      hyprpm disable hyprbars-os99"
+      say "      hyprpm remove $(repo_url)"
+    else
+      say "      hyprctl plugin unload $(cat "$HOME/.local/lib/libhyprbars-os99.path" 2>/dev/null)"
+    fi
+  fi
   exit 0
 fi
 
@@ -836,21 +850,42 @@ elif $AUTO && command -v hyprpm >/dev/null 2>&1; then
   # IS loaded this branch is unreachable, which is deliberate -- reloading
   # plugins under a running Hyprland is the one operation that can take the
   # session down with it.
+  #
+  # `hyprpm update` FIRST, and not as a nicety. hyprpm keeps a tree of Hyprland
+  # headers built from source, and `hyprpm add` refuses outright -- "Headers
+  # outdated, please run hyprpm update" -- when they are missing or stale. On a
+  # machine that has never used hyprpm they are always missing, which is to say:
+  # on every machine installing this for the first time. Skipping it does not
+  # degrade, it fails, and it used to fail with its output thrown away.
+  hp_log="$(mktemp)"
   say "building the window-frame plugin against your Hyprland."
-  say "This compiles Hyprland's headers and takes a few minutes."
-  hyprpm add "$(repo_url)" >/dev/null 2>&1 || true   # already added is fine
-  if hyprpm enable hyprbars-os99 >/dev/null 2>&1 && hyprpm reload -n >/dev/null 2>&1 \
-     && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
-    good "built, enabled and loaded"
+  say "The first build on a machine compiles Hyprland itself for headers,"
+  say "which is tens of minutes. Later ones are quick."
+  if ! hyprpm update >"$hp_log" 2>&1; then
+    bad "hyprpm could not build Hyprland's headers:"
+    tail -3 "$hp_log" | sed 's/^/      /'
+    rm -f "$hp_log"
   else
-    bad "hyprpm could not build it. Run it by hand to see why:"
-    say "      hyprpm add $(repo_url)"
-    say "      hyprpm enable hyprbars-os99 && hyprpm reload -n"
+    hyprpm add "$(repo_url)" >"$hp_log" 2>&1 || true   # already added is fine
+    if hyprpm enable hyprbars-os99 >>"$hp_log" 2>&1 && hyprpm reload >>"$hp_log" 2>&1 \
+       && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+      good "built, enabled and loaded"
+      rm -f "$hp_log"
+    else
+      # Say WHY. The version of this that discarded hyprpm's output turned a
+      # one-line diagnosis into an afternoon.
+      bad "hyprpm could not build the plugin:"
+      tail -4 "$hp_log" | sed 's/^/      /'
+      say "      hyprpm update && hyprpm add $(repo_url)"
+      say "      hyprpm enable hyprbars-os99 && hyprpm reload"
+      rm -f "$hp_log"
+    fi
   fi
 else
   bad "not installed. On another machine this is the step that needs doing:"
+  say "      hyprpm update                 # headers; the slow one, once"
   say "      hyprpm add $(repo_url)"
-  say "      hyprpm enable hyprbars-os99 && hyprpm reload -n"
+  say "      hyprpm enable hyprbars-os99 && hyprpm reload"
 fi
 
 # ---------------------------------------------------------------- 7. looknfeel
