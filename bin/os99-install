@@ -330,6 +330,14 @@ if $SELFTEST; then
              plugin/hyprbars/Makefile themes/os-99-platinum/decor/generate-art.py; do
       [[ -e $f ]] || { echo "missing: $f"; exit 1; }
     done' _ "$REPO_ROOT"
+  # bars.lua is GENERATED and carries the button list. A copy committed to the
+  # repository is installed by `omarchy theme set` and silently overrides the
+  # user's configuration until something regenerates it -- which is how a fresh
+  # install showed three boxes while the config asked for eight.
+  t "no generated bars.lua is committed" bash -c '
+    cd "$1" || exit 1
+    n=$(git ls-files | grep -c "bars\.lua$") || true
+    [[ ${n:-0} -eq 0 ]] || { echo "$n committed bars.lua"; exit 1; }' _ "$REPO_ROOT"
   t "no symlinks anywhere in the package" bash -c '
     link=$(find "$1" -name .git -prune -o -type l -print -quit)
     [[ -z $link ]] || { echo "symlink: $link"; exit 1; }' _ "$REPO_ROOT"
@@ -765,6 +773,14 @@ else
     rm -rf -- "$GENOUT"
     trap - EXIT
     GENOUT=""
+  fi
+  # And PUBLISH it. The generator writes into ~/.config/omarchy/themes, but
+  # `omarchy theme set` made a COPY under ~/.local/state, so regenerating alone
+  # changes the source and not the screen -- which is exactly how a fresh
+  # install ended up showing three title-bar boxes while the config asked for
+  # eight, and looking like it had worked.
+  if os99_publish_art; then
+    good "art copied into the live theme"
   fi
 fi
 

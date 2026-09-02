@@ -114,6 +114,30 @@ os99_sibling() {
   command -v "$1" 2>/dev/null
 }
 
+# ----------------------------------------------------------------------- art
+#
+# Copy freshly drawn art into the LIVE theme.
+#
+# `omarchy theme set` COPIES a theme into ~/.local/state/omarchy/current/theme;
+# it does not symlink it. So regenerating art under ~/.config/omarchy/themes
+# changes the SOURCE and not what is on screen, and everything looks like it
+# worked. bars.lua rides along because it carries the BUTTON LIST and
+# os99-window-bars evals the live copy -- without this, a box toggled in the
+# config applies on the next theme switch rather than now.
+#
+# Returns non-zero when the live theme is not one of ours, which is not a
+# failure: there is simply nothing of ours on screen to update.
+os99_publish_art() {
+  local live cur src
+  live="$HOME/.local/state/omarchy/current/theme"
+  cur=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo)
+  [[ $cur == os-99-* ]] || return 1
+  src="$HOME/.config/omarchy/themes/$cur"
+  [[ -d $src/decor && -d $live/decor ]] || return 1
+  cp -f "$src/decor/"*.png "$src/decor/bar.env" "$src/decor/bars.lua" \
+        "$live/decor/" 2>/dev/null
+}
+
 # ------------------------------------------------------------------ sessions
 #
 # Setting OS 99 up is not one action. It copies a theme in, draws art at this
