@@ -3,6 +3,7 @@
 # WITHOUT going anywhere near `hyprctl reload`.
 #
 #   os99-theme-reload            re-apply the current theme's art
+#   os99-theme-reload noir       switch to Os 99 Noir      (the install default)
 #   os99-theme-reload light      switch to Os 99 Platinum  (needs omarchy theme set)
 #   os99-theme-reload dark       switch to Os 99 Graphite
 #
@@ -29,10 +30,11 @@ LIVE="$HOME/.local/state/omarchy/current/theme"
 HOOK="$HOME/.local/bin/os99-window-bars"
 
 case "${1:-}" in
+  noir)  SWITCH="Os 99 Noir" ;;
   light) SWITCH="Os 99 Platinum" ;;
   dark)  SWITCH="Os 99 Graphite" ;;
   "")    SWITCH="" ;;
-  *)     echo "usage: os99-theme-reload [light|dark]" >&2; exit 2 ;;
+  *)     echo "usage: os99-theme-reload [noir|light|dark]" >&2; exit 2 ;;
 esac
 
 # A Hyprland that answers, not the newest directory: those outlive the
@@ -45,6 +47,7 @@ python3 "$GEN"
 CURRENT="$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo)"
 WANT_DIR=""
 case "$SWITCH" in
+  "Os 99 Noir")     WANT_DIR="os-99-noir" ;;
   "Os 99 Platinum")      WANT_DIR="os-99-platinum" ;;
   "Os 99 Graphite") WANT_DIR="os-99-graphite" ;;
 esac

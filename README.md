@@ -6,7 +6,7 @@ bar, and a hard offset drop shadow. It is an original reimplementation of a
 late-90s desktop look — not a port, and not affiliated with or endorsed by
 Apple.
 
-![OS 99 Platinum](themes/os-99-platinum/preview.png)
+![OS 99 Noir](themes/os-99-noir/preview.png)
 
 ## What you get
 
@@ -16,9 +16,14 @@ Apple.
 
   | | | |
   |---|---|---|
-  | [**Platinum**](themes/os-99-platinum/preview.png) | light chrome, light content | the 1999 default |
+  | [**Noir**](themes/os-99-noir/preview.png) | light chrome, dark content | **the default** — OS 9 windows, dark apps |
+  | [**Platinum**](themes/os-99-platinum/preview.png) | light chrome, light content | the 1999 original, all the way down |
   | [**Graphite**](themes/os-99-graphite/preview.png) | dark chrome, dark content | for people who live in the dark |
-  | [**Noir**](themes/os-99-noir/preview.png) | light chrome, dark content | Platinum windows, dark apps |
+
+  Noir is what the install lands on. The frames and the menu bar are the point
+  of this theme, and Noir shows them without also turning every editor and
+  terminal white. `omarchy theme set "OS 99 Platinum"` when you want the whole
+  1999 experience.
 
 - **A real nine-patch window frame**, drawn around the *whole* window with the
   title bar as its top edge. Hyprland's own border cannot do this: it
@@ -74,7 +79,7 @@ compositor plugin that draws the frames. The widget asks what is still
 outstanding, says so in the bar, and offers to do it; the popup lists every step
 with a tick or a dot, so you can see what it is about to do before it does it.
 It takes a few minutes, almost all of it compiling the frame plugin against your
-own Hyprland.
+own Hyprland, and it finishes on **OS 99 Noir**.
 
 Nothing happens without that click. The outstanding work includes building
 native code into the compositor and switching your theme, and neither is a thing
@@ -100,7 +105,7 @@ omarchy plugin add https://github.com/caariiboouu/os-99 --enable
 ~/.config/omarchy/plugins/io.github.caariiboouu.os-99/bin/os99-install
 
 # 3. wear it
-omarchy theme set "OS 99 Platinum"
+omarchy theme set "OS 99 Noir"
 ```
 
 `hyprpm update` is not optional and not a nicety: hyprpm keeps a tree of

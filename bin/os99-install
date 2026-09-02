@@ -911,14 +911,17 @@ if [[ $THEME_NAME == os-99-* ]]; then
 elif $CHECK; then
   bad "not applied (--check: not changing it)"
 elif $AUTO && command -v omarchy >/dev/null 2>&1; then
-  say "applying Os 99 Platinum"
-  if omarchy theme set "Os 99 Platinum" >/dev/null 2>&1; then
+  # Noir is the one to land on: light OS 9 chrome around dark content. The
+  # frames and the menu bar are the point of this theme, and Noir shows them
+  # without also making every editor and terminal white.
+  say "applying Os 99 Noir"
+  if omarchy theme set "Os 99 Noir" >/dev/null 2>&1; then
     good "applied"
   else
-    bad "could not apply -- run: omarchy theme set \"Os 99 Platinum\""
+    bad "could not apply -- run: omarchy theme set \"Os 99 Noir\""
   fi
 else
-  bad "not applied yet -- run: omarchy theme set \"Os 99 Platinum\""
+  bad "not applied yet -- run: omarchy theme set \"Os 99 Noir\""
 fi
 
 head_ "Summary"

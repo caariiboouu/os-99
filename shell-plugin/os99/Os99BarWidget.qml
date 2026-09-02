@@ -700,7 +700,7 @@ BarWidget {
                 + "frames go with it. Rebuilding takes a few minutes."
               : "Setting up copies the theme in, draws the window art at this "
                 + "display's scale, builds the frame plugin against your Hyprland, "
-                + "and switches to OS 99 Platinum. The build is the slow part, and "
+                + "and switches to OS 99 Noir. The build is the slow part, and "
                 + "the first one on a machine is much the slowest: it compiles "
                 + "Hyprland itself to get headers. Leave it running."
         color: root.foreground
