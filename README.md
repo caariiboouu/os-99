@@ -94,11 +94,22 @@ installs the hooks, and registers the menu-bar font widget.
 
 `hyprpm` builds it against your own Hyprland, so there is no ABI mismatch to
 manage. The source is in [`plugin/`](plugin/) — same repository, so there is one
-URL to install and one place to file issues. [`hyprpm.toml`](hyprpm.toml) carries
-a `commit_pins` entry binding a tested Hyprland release to a fixed commit of this
-repository, so what gets compiled into the compositor is a reviewed tree rather
-than a moving branch; a Hyprland version with no pin falls back to `HEAD`,
-because `hyprpm` offers nothing else for one.
+URL to install and one place to file issues.
+
+[`hyprpm.toml`](hyprpm.toml) pins that build. A `commit_pins` entry binds a
+tested Hyprland release to a fixed commit of this repository, and `hyprpm`
+checks that commit out before compiling — so what ends up inside the compositor
+is a reviewed tree rather than whatever the branch says today. The pin binds the
+`.so` and nothing else: the bar widget and the helpers arrive through the
+Omarchy plugin clone, which `hyprpm` never touches. A Hyprland version with no
+pin falls back to `HEAD`, because `hyprpm` offers nothing else for one, and pins
+are added as each release is actually built and tested here.
+
+`since_hyprland` names the oldest Hyprland this compiles against, as Hyprland's
+own commit count (`hyprctl version` prints it as `commits:`). The fork calls
+APIs that do not exist further back, so on an older Hyprland it would not fail
+to work — it would fail to build, and a wall of C++ errors is a poor way to
+learn you are on the wrong version.
 
 It derives from [hyprbars](https://github.com/hyprwm/hyprland-plugins) and keeps
 its BSD 3-Clause licence; [`plugin/README.md`](plugin/README.md) lists what was

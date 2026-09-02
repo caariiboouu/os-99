@@ -25,19 +25,29 @@
 # hyprpm resets to the named commit, so what gets compiled into the compositor
 # is a fixed, reviewable tree rather than a moving branch.
 #
+# The second hash in a pin is a commit in THIS repository -- upstream's pins
+# name commits in their own plugin repo, and ours name ours. Only plugin/ is
+# built from it: the shell widget and the helpers arrive through the Omarchy
+# plugin clone, not through hyprpm, so a pin binds the compiled .so and nothing
+# else.
+#
 # The pin below is v0.56.2 -- the release this is developed and tested against --
-# bound to the commit that tree was reviewed at. Every later change to the plugin
+# bound to the commit that tree was reviewed at. Every later change to plugin/
 # needs a NEW pin entry to reach users on that Hyprland; that is the cost of the
 # guarantee, and it is the right way round. Hyprland versions with no pin fall
 # back to HEAD, because hyprpm offers nothing else for them; pins are added as
 # each version is actually built and tested here.
+#
+# A pin naming a commit that is not PUSHED makes `hyprpm add` fail outright --
+# it clones, reads this file, and checks the hash out. Pin and target ship
+# together or not at all.
 
 [repository]
 name = "os-99"
 authors = ["Vaxry", "Joel"]
 commit_pins = [
     # Hyprland v0.56.2                        os-99
-    ["efb50993780079460b0cbed1363e2166a2de1d9f", "9f78acee938c5df3d062e6d684f8a4cb9fd2b3f6"],
+    ["efb50993780079460b0cbed1363e2166a2de1d9f", "dec0eb3d2f1e6a7b212e37693435065bbb551577"],
 ]
 
 [hyprbars-os99]
@@ -47,3 +57,12 @@ output = "plugin/hyprbars/hyprbars.so"
 build = [
     "make -C plugin/hyprbars all",
 ]
+# Hyprland's own commit COUNT, not a version string -- `hyprctl version` prints
+# it as "commits:". This fork calls APIs that do not exist further back
+# (Config::Actions::fullscreenWindow with a window argument, IGeometric's
+# GEOMETRIC_GOAL, m_ruleApplicator's per-window rounding), so on an older
+# Hyprland it would not fail to work, it would fail to COMPILE -- and a wall of
+# C++ errors is a poor way to learn you are on the wrong version. This makes
+# hyprpm say so instead. 7661 is v0.56.2, the oldest release it is known to
+# build against; it is a floor established by testing, not a guess at one.
+since_hyprland = 7661
