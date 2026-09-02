@@ -11,6 +11,11 @@
 #                           applying the theme. This is what the widget's
 #                           "Set up OS 99" runs, so that installing the plugin
 #                           is the whole install and nothing is left in a README
+#   os99-install --remove   undo all of that. It switches to another theme
+#                           first, keeps your os99-theme.toml, and leaves the
+#                           two hyprpm commands to you -- unloading a plugin
+#                           from a running compositor is not a thing to do in
+#                           the middle of a script
 #
 # The theme is not one artefact. It is art baked at this display's scale, a
 # forked hyprbars plugin, two theme-set hooks, a config file and a shell plugin,
@@ -26,6 +31,7 @@ set -uo pipefail
 CHECK=false
 AUTO=false
 STATUS=false
+REMOVE=false
 # Unknown arguments must not fall through to a real install. They used to: any
 # flag that was not --check simply left CHECK=false, so `os99-install --help`
 # quietly performed a full install -- copying plugins, rewriting hooks, and
@@ -35,15 +41,19 @@ case "${1:-}" in
   --check)   CHECK=true ;;
   --status)  STATUS=true ;;
   --auto)    AUTO=true ;;
-  -h|--help) sed -n '2,24p' "$0" | sed 's/^# \?//'; exit 0 ;;
+  --remove)  REMOVE=true ;;
+  # Print the header block, however long it grows, rather than a line range
+  # that silently starts spilling code the moment somebody adds a paragraph.
+  -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d; s/^# \?//'; exit 0 ;;
   *)
     echo "os99-install: unknown option '$1'" >&2
-    echo "usage: os99-install [--check | --status | --auto]" >&2
+    echo "usage: os99-install [--check | --status | --auto | --remove]" >&2
     exit 2
     ;;
 esac
 
 PLUGIN_ID="io.github.caariiboouu.os-99"
+SHELLJSON="$HOME/.config/omarchy/shell.json"
 TOML="$HOME/.config/omarchy/os99-theme.toml"
 GEN="$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py"
 HOOKS="$HOME/.config/omarchy/hooks/theme-set.d"
@@ -58,6 +68,99 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || \
   export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr" 2>/dev/null | head -1)
+
+# shell.json is the user's file and it is not reconstructible from anything
+# else -- a previous session emptied it and took seven widgets with it. So every
+# read and every write goes through one program, and that program never writes
+# shell.json in place: it writes a private randomly named file beside it
+# (mkstemp, O_EXCL, mode 0600, so nothing can be pre-planted at a name we are
+# about to use), forces it to disk, and renames it over the original, which is
+# atomic. A reader sees the whole old file or the whole new one, never half of
+# either, and an interrupted run leaves the original exactly as it was.
+#
+#   shelljson has-old            -> 0 if a merged-away j.os99-* widget is listed
+#   shelljson drop-old           remove them
+#   shelljson has <id>           -> 0 if <id> is in the bar layout
+#   shelljson add <id>           put <id> at the front of the right section
+#   shelljson remove <id>        take it back out of every section
+shelljson() {
+  python3 - "$SHELLJSON" "$@" <<'PYEOF'
+import json, os, stat, sys, tempfile
+
+OLD = {"j.os99-font", "j.os99-minimized"}
+
+# Follow a symlink once, then work on what it names: people keep shell.json in a
+# dotfiles repository, and renaming over the link would detach it.
+path = os.path.realpath(sys.argv[1])
+cmd = sys.argv[2]
+
+fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+with os.fdopen(fd, "r", encoding="utf-8") as fh:
+    d = json.load(fh)
+lay = d.get("bar", {}).get("layout", {})
+listed = [w.get("id") for sec in lay.values() for w in sec]
+
+
+def publish():
+    dirname = os.path.dirname(path) or "."
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    tfd, tmp = tempfile.mkstemp(prefix=".os99-shell.", suffix=".json.tmp", dir=dirname)
+    try:
+        os.fchmod(tfd, mode)
+        with os.fdopen(tfd, "w", encoding="utf-8") as fh:
+            # Match the file's own formatting exactly -- one-space indent,
+            # sorted keys, and NO trailing newline -- so this shows up as a
+            # one-line diff rather than a rewrite of the whole file.
+            json.dump(d, fh, indent=1, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    dfd = os.open(dirname, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+if cmd == "has-old":
+    sys.exit(0 if any(w in OLD for w in listed) else 1)
+
+if cmd == "has":
+    sys.exit(0 if sys.argv[3] in listed else 1)
+
+if cmd == "drop-old":
+    for sec in lay:
+        lay[sec] = [w for w in lay[sec] if w.get("id") not in OLD]
+    publish()
+    sys.exit(0)
+
+if cmd == "remove":
+    for sec in lay:
+        lay[sec] = [w for w in lay[sec] if w.get("id") != sys.argv[3]]
+    publish()
+    sys.exit(0)
+
+if cmd == "add":
+    sec = d.setdefault("bar", {}).setdefault("layout", {}).setdefault("right", [])
+    # Front of the right section. The widget is only visible when something IS
+    # minimized, so the position is mostly cosmetic.
+    sec.insert(0, {"id": sys.argv[3]})
+    publish()
+    sys.exit(0)
+
+sys.exit(2)
+PYEOF
+}
+
+# ALWAYS back up before a write. The layout is not reconstructible.
+backup_shelljson() { cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"; }
 
 # Where this came from, for hyprpm. The plugin directory left by
 # `omarchy plugin add` is a git checkout, so it knows its own origin; the
@@ -88,21 +191,8 @@ if $STATUS; then
                    python3 -c 'import tomllib' 2>/dev/null && st_deps=true
   st_files=false;  [[ -f $TOML && -f $GEN && -f $HOOKS/os99-bars-hook.sh ]] && st_files=true
   st_art=false;    [[ -f $HOME/.config/omarchy/themes/os-99-platinum/decor/bar.env ]] && st_art=true
-  # Read directly rather than through shelljson(): that is defined further
-  # down, and this path exits before reaching it.
   st_widget=false
-  if [[ -f $HOME/.config/omarchy/shell.json ]] && python3 - \
-       "$HOME/.config/omarchy/shell.json" "$PLUGIN_ID" <<'PYEOF' 2>/dev/null
-import json, os, sys
-path = os.path.realpath(sys.argv[1])
-fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-with os.fdopen(fd, "r", encoding="utf-8") as fh:
-    d = json.load(fh)
-lay = d.get("bar", {}).get("layout", {})
-listed = [w.get("id") for sec in lay.values() for w in sec]
-sys.exit(0 if sys.argv[2] in listed else 1)
-PYEOF
-  then st_widget=true; fi
+  [[ -f $SHELLJSON ]] && shelljson has "$PLUGIN_ID" 2>/dev/null && st_widget=true
   st_plugin=false; hyprctl plugin list 2>/dev/null | grep -q hyprbars && st_plugin=true
   st_theme=false;  [[ $THEME_NAME == os-99-* ]] && st_theme=true
   st_hyprpm=false; command -v hyprpm >/dev/null 2>&1 && st_hyprpm=true
@@ -133,6 +223,84 @@ print(json.dumps({
     "steps": rows,
 }))
 '
+  exit 0
+fi
+
+# ------------------------------------------------------------------ 0b. remove
+# Undo the install. One command, because an install that takes one click and an
+# uninstall that takes six lines of shell copied out of a README is not a pair.
+#
+# What it deliberately does NOT do is touch hyprpm. Disabling a plugin unloads
+# it from the RUNNING compositor, and that is the one operation here that has
+# taken a session down; it is two commands, they are printed at the end, and
+# they belong to a moment you choose rather than to the middle of a script.
+#
+# The theme config is moved aside rather than deleted. Somebody who spent an
+# evening tuning ridge counts should not lose it to an uninstall.
+if $REMOVE; then
+  head_ "Wearing something else"
+  THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
+  if [[ $THEME_NAME == os-99-* ]] && command -v omarchy >/dev/null 2>&1; then
+    # Anything that is not one of ours. Removing the theme directory out from
+    # under the active theme leaves the desktop with no theme at all.
+    OTHER=$(omarchy theme list 2>/dev/null | grep -v '^Os 99' | head -1)
+    if [[ -n $OTHER ]] && omarchy theme set "$OTHER" >/dev/null 2>&1; then
+      good "switched to $OTHER"
+    else
+      bad "could not switch away from $THEME_NAME -- do that first, then re-run"
+      exit 1
+    fi
+  else
+    good "no OS 99 theme is active"
+  fi
+
+  head_ "Files"
+  if [[ -f $SHELLJSON ]] && shelljson has "$PLUGIN_ID" 2>/dev/null; then
+    backup_shelljson
+    shelljson remove "$PLUGIN_ID" && good "widget off the status bar (backup written)" \
+      || bad "could not edit shell.json"
+  else
+    good "widget was not on the status bar"
+  fi
+
+  for h in "$HOME"/.config/omarchy/hooks/theme-set.d/os99-*.sh \
+           "$HOME"/.config/omarchy/hooks/post-boot.d/os99-*.sh; do
+    [[ -e $h ]] || continue
+    rm -f "$h" && say "removed $(basename "$h")"
+  done
+  good "hooks"
+
+  rm -f "$HOME"/.local/bin/os99-*
+  good "scripts out of ~/.local/bin"
+
+  for t in "$HOME"/.config/omarchy/themes/os-99-*; do
+    [[ -d $t ]] || continue
+    rm -rf "$t" && say "removed $(basename "$t")"
+  done
+  good "themes"
+
+  if [[ -f $TOML ]]; then
+    KEEP="$TOML.removed.$(date +%Y%m%d%H%M%S)"
+    mv "$TOML" "$KEEP" && note "kept your tuning at $KEEP"
+  fi
+
+  head_ "Plugin"
+  if command -v omarchy >/dev/null 2>&1 && [[ -d $HOME/.config/omarchy/plugins/$PLUGIN_ID ]]; then
+    if omarchy plugin remove "$PLUGIN_ID" --yes >/dev/null 2>&1; then
+      good "plugin removed"
+    else
+      bad "could not remove the plugin -- run: omarchy plugin remove $PLUGIN_ID"
+    fi
+  else
+    good "plugin was not installed"
+  fi
+
+  head_ "Left for you"
+  say "The compositor plugin is still loaded. Unloading it restarts the window"
+  say "frames, so it is yours to time:"
+  say ""
+  say "      hyprpm disable hyprbars-os99"
+  say "      hyprpm remove $(repo_url)"
   exit 0
 fi
 
@@ -371,93 +539,6 @@ head_ "Shell plugins"
 # It needs two separate things: the plugin directory, which the repo carries,
 # and an entry in shell.json's bar layout, which it cannot -- shell.json is the
 # user's file.
-SHELLJSON="$HOME/.config/omarchy/shell.json"
-
-# shell.json is the user's file and it is not reconstructible from anything
-# else -- a previous session emptied it and took seven widgets with it. So every
-# read and every write goes through one program, and that program never writes
-# shell.json in place: it writes a private randomly named file beside it
-# (mkstemp, O_EXCL, mode 0600, so nothing can be pre-planted at a name we are
-# about to use), forces it to disk, and renames it over the original, which is
-# atomic. A reader sees the whole old file or the whole new one, never half of
-# either, and an interrupted run leaves the original exactly as it was.
-#
-#   shelljson has-old            -> 0 if a merged-away j.os99-* widget is listed
-#   shelljson drop-old           remove them
-#   shelljson has <id>           -> 0 if <id> is in the bar layout
-#   shelljson add <id>           put <id> at the front of the right section
-shelljson() {
-  python3 - "$SHELLJSON" "$@" <<'PYEOF'
-import json, os, stat, sys, tempfile
-
-OLD = {"j.os99-font", "j.os99-minimized"}
-
-# Follow a symlink once, then work on what it names: people keep shell.json in a
-# dotfiles repository, and renaming over the link would detach it.
-path = os.path.realpath(sys.argv[1])
-cmd = sys.argv[2]
-
-fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-with os.fdopen(fd, "r", encoding="utf-8") as fh:
-    d = json.load(fh)
-lay = d.get("bar", {}).get("layout", {})
-listed = [w.get("id") for sec in lay.values() for w in sec]
-
-
-def publish():
-    dirname = os.path.dirname(path) or "."
-    mode = stat.S_IMODE(os.stat(path).st_mode)
-    tfd, tmp = tempfile.mkstemp(prefix=".os99-shell.", suffix=".json.tmp", dir=dirname)
-    try:
-        os.fchmod(tfd, mode)
-        with os.fdopen(tfd, "w", encoding="utf-8") as fh:
-            # Match the file's own formatting exactly -- one-space indent,
-            # sorted keys, and NO trailing newline -- so this shows up as a
-            # one-line diff rather than a rewrite of the whole file.
-            json.dump(d, fh, indent=1, sort_keys=True)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp, path)
-        tmp = None
-    finally:
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-    dfd = os.open(dirname, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
-
-
-if cmd == "has-old":
-    sys.exit(0 if any(w in OLD for w in listed) else 1)
-
-if cmd == "has":
-    sys.exit(0 if sys.argv[3] in listed else 1)
-
-if cmd == "drop-old":
-    for sec in lay:
-        lay[sec] = [w for w in lay[sec] if w.get("id") not in OLD]
-    publish()
-    sys.exit(0)
-
-if cmd == "add":
-    sec = d.setdefault("bar", {}).setdefault("layout", {}).setdefault("right", [])
-    # Front of the right section. The widget is only visible when something IS
-    # minimized, so the position is mostly cosmetic.
-    sec.insert(0, {"id": sys.argv[3]})
-    publish()
-    sys.exit(0)
-
-sys.exit(2)
-PYEOF
-}
-
-# ALWAYS back up before a write. The layout is not reconstructible.
-backup_shelljson() { cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"; }
 
 # Drop the merged-away widgets from the bar layout before registering the new
 # one, so an upgrade does not leave dead entries the shell warns about.

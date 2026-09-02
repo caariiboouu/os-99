@@ -5,3 +5,4 @@ __pycache__/
 *.orig
 plugin/hyprbars/*.so
 plugin/hyprbars/build/
+.ruff_cache/
