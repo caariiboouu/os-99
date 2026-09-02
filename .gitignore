@@ -6,3 +6,7 @@ __pycache__/
 plugin/hyprbars/*.so
 plugin/hyprbars/build/
 .ruff_cache/
+packaging/src/
+packaging/pkg/
+packaging/*.pkg.tar.*
+packaging/*.tar.gz

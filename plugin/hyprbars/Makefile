@@ -30,7 +30,7 @@ $(TARGET): $(SRC)
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(EXTRA_FLAGS) $(INCLUDES) $^ $> -o $@ $(LIBS)
 
 clean:
-	rm ./$(TARGET)
+	rm -f ./$(TARGET)
 
 meson-build:
 	mkdir -p build

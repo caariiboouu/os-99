@@ -41,7 +41,7 @@ source "$_os99_lib" || { echo "os99-install: missing $_os99_lib" >&2; exit 1; }
 
 # Bumped by hand, and checked against manifest.json by --selftest: a version
 # that only one of them knows is a version nobody can trust.
-OS99_VERSION="1.2.0"
+OS99_VERSION="1.2.1"
 
 CHECK=false
 AUTO=false
@@ -369,6 +369,12 @@ for key, path in m["entryPoints"].items():
     if not os.path.exists(os.path.join(sys.argv[1], path)):
         raise SystemExit("entry point missing: %s -> %s" % (key, path))
 PYEOF' _ "$REPO_ROOT" "$OS99_VERSION"
+  t "the PKGBUILD names the same version as everything else" bash -c '
+    v=$(sed -n "s/^_os99ver=//p" "$1/packaging/PKGBUILD" | head -1)
+    [[ $v == "$2" ]] || { echo "PKGBUILD _os99ver=$v, --version=$2"; exit 1; }
+    grep -q "tag=v\${_os99ver}" "$1/packaging/PKGBUILD" || {
+      echo "PKGBUILD source does not pin the tag to _os99ver"; exit 1; }' \
+    _ "$REPO_ROOT" "$OS99_VERSION"
   t "hyprpm.toml parses and its pin names a commit we have" bash -c '
     cd "$1" || exit 1
     python3 - <<PYEOF

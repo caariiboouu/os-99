@@ -21,7 +21,7 @@
 #   makepkg -si            build and install from this directory
 #   yay -S hyprland-plugin-os99-hyprbars     once it is on the AUR
 
-_os99ver=1.2.0
+_os99ver=1.2.1
 pkgname=hyprland-plugin-os99-hyprbars
 pkgver=0.56.2
 pkgrel=1
@@ -42,7 +42,8 @@ sha256sums=('SKIP')
 
 build() {
   cd "${srcdir}/${pkgname}/plugin/hyprbars"
-  make clean
+  # No clean: makepkg extracts a fresh working copy every time, so there is
+  # nothing to clean and asking produced a build failure on the first run.
   make -j"$(nproc)" all
 }
 
