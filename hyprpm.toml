@@ -19,13 +19,26 @@
 # hl.plugin.hyprbars.* and the theme calls it by name, so it cannot be loaded
 # alongside upstream hyprbars. Pick one.
 #
-# No commit_pins: those map Hyprland commits to commits in UPSTREAM's plugin
-# repo, and those hashes do not exist here. Without them hyprpm builds HEAD,
-# which is the honest behaviour for a tree with no release history of its own.
+# commit_pins map a Hyprland commit to the commit of THIS repository that
+# hyprpm should check out and build for it. They are how a compositor-native
+# plugin stops being "whatever HEAD happens to say today": on a pinned Hyprland,
+# hyprpm resets to the named commit, so what gets compiled into the compositor
+# is a fixed, reviewable tree rather than a moving branch.
+#
+# The pin below is v0.56.2 -- the release this is developed and tested against --
+# bound to the commit that tree was reviewed at. Every later change to the plugin
+# needs a NEW pin entry to reach users on that Hyprland; that is the cost of the
+# guarantee, and it is the right way round. Hyprland versions with no pin fall
+# back to HEAD, because hyprpm offers nothing else for them; pins are added as
+# each version is actually built and tested here.
 
 [repository]
 name = "os-99"
 authors = ["Vaxry", "Joel"]
+commit_pins = [
+    # Hyprland v0.56.2                        os-99
+    ["efb50993780079460b0cbed1363e2166a2de1d9f", "9f78acee938c5df3d062e6d684f8a4cb9fd2b3f6"],
+]
 
 [hyprbars-os99]
 description = "hyprbars with nine-patch frame art: draws an OS 99 window frame around the whole window, not just a title bar"

@@ -52,6 +52,13 @@ hyprpm reload -n
 Same repository — the plugin source is in [`plugin/`](plugin/). `hyprpm` builds
 it against your own Hyprland, so there is no ABI mismatch to manage.
 
+This is compositor-native code, so what gets built is pinned rather than left at
+whatever the branch says today: [`hyprpm.toml`](hyprpm.toml) carries a
+`commit_pins` entry binding Hyprland **v0.56.2** to a fixed commit of this
+repository, and `hyprpm` checks that commit out before building. A Hyprland
+version with no pin falls back to `HEAD`, because `hyprpm` offers nothing else
+for one — pins are added as each version is actually built and tested here.
+
 It derives from [hyprbars](https://github.com/hyprwm/hyprland-plugins) and keeps
 its BSD 3-Clause licence; [`plugin/README.md`](plugin/README.md) lists what was
 changed and why. It still reports itself to Hyprland as `hyprbars`, so it cannot
