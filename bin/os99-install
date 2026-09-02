@@ -162,6 +162,19 @@ PYEOF
 # ALWAYS back up before a write. The layout is not reconstructible.
 backup_shelljson() { cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"; }
 
+# A companion script, found BESIDE this one first. The widget runs the copy in
+# the plugin directory, and the shell process's PATH is not a login shell's --
+# it does not necessarily carry ~/.local/bin. Sibling, then the usual install
+# location, then PATH.
+sibling_or_path() {
+  local here candidate
+  here=$(cd -- "$(dirname -- "$(readlink -f "$0")")" && pwd) || here=""
+  for candidate in "$here/$1" "$HOME/.local/bin/$1"; do
+    [[ -n $candidate && -x $candidate ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  command -v "$1" 2>/dev/null
+}
+
 # Where this came from, for hyprpm. The plugin directory left by
 # `omarchy plugin add` is a git checkout, so it knows its own origin; the
 # constant is only the fallback for a copy that has lost it.
@@ -194,15 +207,44 @@ if $STATUS; then
   st_widget=false
   [[ -f $SHELLJSON ]] && shelljson has "$PLUGIN_ID" 2>/dev/null && st_widget=true
   st_plugin=false; hyprctl plugin list 2>/dev/null | grep -q hyprbars && st_plugin=true
+
+  # A plugin that is not loaded has two very different stories behind it, and
+  # they want different words. Never built: this is a fresh install. Built, and
+  # for a DIFFERENT Hyprland: the frames were working this morning and an
+  # upgrade took them, which is the failure people actually hit and the one that
+  # otherwise looks like the theme breaking for no reason.
+  BUILTF="$HOME/.local/lib/libhyprbars-os99.built"
+  PLUGIN_REASON=""
+  BUILT_TAG=""
+  RUN_TAG=$(hyprctl version 2>/dev/null | sed -n 's/^Tag: \([^,]*\).*/\1/p' | head -1)
+  if ! $st_plugin; then
+    BUILT_TAG=$(sed -n 's/^HYPRLAND_TAG=//p' "$BUILTF" 2>/dev/null | head -1)
+    # .built is the precise answer and .path is the fallback: an install made
+    # before .built existed still has a build pointer, and "you had this
+    # working and an upgrade took it" is the right story for it either way.
+    if [[ -f $BUILTF || -r $HOME/.local/lib/libhyprbars-os99.path ]]
+    then PLUGIN_REASON=stale; else PLUGIN_REASON=missing; fi
+  fi
   st_theme=false;  [[ $THEME_NAME == os-99-* ]] && st_theme=true
   st_hyprpm=false; command -v hyprpm >/dev/null 2>&1 && st_hyprpm=true
 
   DEPS=$st_deps FILES=$st_files ART=$st_art WIDGET=$st_widget PLUGIN=$st_plugin \
-  THEME=$st_theme HYPRPM=$st_hyprpm URL="$(repo_url)" python3 -c '
+  THEME=$st_theme HYPRPM=$st_hyprpm URL="$(repo_url)" \
+  REASON="$PLUGIN_REASON" BUILT_TAG="$BUILT_TAG" RUN_TAG="$RUN_TAG" python3 -c '
 import json, os
 
 def flag(name):
     return os.environ[name] == "true"
+
+reason = os.environ.get("REASON", "")
+built_tag = os.environ.get("BUILT_TAG", "")
+run_tag = os.environ.get("RUN_TAG", "")
+
+plugin_label = "window frames (hyprbars)"
+if reason == "stale":
+    plugin_label = ("window frames — built for Hyprland %s, running %s"
+                    % (built_tag, run_tag)) if built_tag and run_tag and built_tag != run_tag \
+                   else "window frames — the built plugin is not loading"
 
 steps = [
     ("deps",   "python3 and hyprctl",       flag("DEPS"),   flag("DEPS"),
@@ -210,16 +252,34 @@ steps = [
     ("files",  "theme files and hooks",     flag("FILES"),  True,  ""),
     ("art",    "window art for this display", flag("ART"),  True,  ""),
     ("widget", "widget on the status bar",  flag("WIDGET"), True,  ""),
-    ("plugin", "window frames (hyprbars)",  flag("PLUGIN"), flag("HYPRPM"),
+    ("plugin", plugin_label,                flag("PLUGIN"), flag("HYPRPM"),
      "install hyprpm (it ships with Hyprland)"),
     ("theme",  "OS 99 theme applied",       flag("THEME"),  True,  ""),
 ]
 rows = [{"id": i, "label": l, "done": d, "fixable": f, "hint": h}
         for (i, l, d, f, h) in steps]
+ready = all(r["done"] for r in rows)
+outstanding = [r["id"] for r in rows if not r["done"]]
+
+# The words the bar should use. A rebuild after a system upgrade is not a
+# "setup", and calling it one would tell somebody who has been running this for
+# months that their install never finished.
+upgraded = bool(built_tag and run_tag and built_tag != run_tag)
+if ready:
+    headline, action = "", ""
+elif outstanding == ["plugin"] and reason == "stale":
+    headline = "Hyprland was updated" if upgraded else "The window frames are not loading"
+    action = "Rebuild window frames"
+else:
+    headline, action = "Finish setting up OS 99", "Set up OS 99"
+
 print(json.dumps({
-    "ready": all(r["done"] for r in rows),
+    "ready": ready,
     "canFix": all(r["done"] or r["fixable"] for r in rows),
     "url": os.environ["URL"],
+    "reason": reason,
+    "headline": headline,
+    "action": action,
     "steps": rows,
 }))
 '
@@ -378,7 +438,7 @@ else
       # os99-install itself goes too: the widget offers to finish the setup,
       # and it can only do that if the thing that finishes it is beside it.
       for h in os99-run os99-minimize os99-buttons os99-menubar-font \
-               os99-theme-reload os99-install; do
+               os99-theme-reload os99-install os99-window-bars os99-hyprbars-rebuild; do
         install -m755 "$REPO/bin/$h" "$plugdir/bin/$h"
       done
       good "bar widget + helpers -> ~/.config/omarchy/plugins/$PLUGIN_ID"
@@ -586,8 +646,15 @@ head_ "hyprbars fork"
 # supported way -- it clones Hyprland's own sources at your version and builds.
 if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   good "loaded"
-elif [[ -r $HOME/.local/lib/libhyprbars-os99.path ]]; then
-  note "built but not loaded -- run os99-window-bars"
+elif $AUTO && [[ -r $HOME/.local/lib/libhyprbars-os99.path ]] \
+     && [[ -n $(sibling_or_path os99-window-bars) ]] \
+     && "$(sibling_or_path os99-window-bars)" >/dev/null 2>&1 \
+     && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+  # A build already on disk that simply is not loaded costs a second to try,
+  # and compiling Hyprland's headers costs minutes. Try the cheap one first.
+  good "loaded the existing build"
+elif [[ -r $HOME/.local/lib/libhyprbars-os99.path ]] && ! $AUTO; then
+  note "built but not loaded -- run os99-install --auto"
 elif $AUTO && command -v hyprpm >/dev/null 2>&1; then
   # Only ever from HERE: nothing is loaded, so there is no live plugin for a
   # reload to pull out from under the compositor. On a machine where the fork

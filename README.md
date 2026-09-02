@@ -272,9 +272,21 @@ beside the widget. Each one explains itself with `--help`.
 ## Troubleshooting
 
 **The window frames disappeared after a system update.** Hyprland plugins are
-ABI-pinned, so a Hyprland upgrade stops the old `.so` loading. The bar widget
-notices and offers **Set up OS 99**, which rebuilds it; from a terminal it is
+ABI-pinned, so a Hyprland upgrade does not make the plugin misbehave — it stops
+it loading, and the frames (which are also the title bars) go with it.
+
+You should not have to work that out. The load is verified rather than assumed:
+when it fails you get a notification naming both versions — *built for Hyprland
+v0.56.2, running v0.57.0* — the bar item changes to **Hyprland was updated**,
+and its button becomes **Rebuild window frames**. Pressing it rebuilds; if a
+usable build is already on disk it is simply loaded, which takes a second
+instead of minutes. From a terminal, `os99-install --auto`,
 `os99-hyprbars-rebuild`, or `hyprpm update`.
+
+The notification is sent once per Hyprland version, not once per hook run — this
+hook also fires on every theme switch, and a notification that repeats is one
+people learn to dismiss. `~/.local/state/os99/plugin-failed` holds the
+diagnosis, and is removed the moment a load succeeds.
 
 **The frame is the wrong size, or the pinstripe shimmers.** The art is drawn at
 your display's scale and does not survive a change of scale. Run `os99-install`

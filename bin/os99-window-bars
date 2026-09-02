@@ -14,6 +14,53 @@
 # handle and keeps running the old code.
 PTR="$HOME/.local/lib/libhyprbars-os99.path"
 SO=$(cat "$PTR" 2>/dev/null || echo "$HOME/.local/lib/libhyprbars-os99.so")
+BUILT="$HOME/.local/lib/libhyprbars-os99.built"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/os99"
+
+# WHY THIS SCRIPT CARES WHETHER THE LOAD WORKED.
+#
+# Hyprland plugins are ABI-pinned. A Hyprland upgrade does not make the .so
+# misbehave, it makes it refuse to load -- and this script discarded that
+# failure, so the visible result was a desktop that had silently lost every
+# window frame, with nothing anywhere saying why or what to do. The frames are
+# also the title bars, so it takes the close boxes with it.
+#
+# So the load is verified, the diagnosis is written down where the bar widget
+# and os99-install can both read it, and the person at the keyboard is told
+# once. Once, not once per hook run: this fires on every theme switch too, and
+# a notification that repeats is a notification people learn to dismiss.
+note_plugin_ok() { rm -f "$STATE/plugin-failed" 2>/dev/null || true; }
+
+note_plugin_failed() {
+  local now tag built_tag stamp
+  mkdir -p "$STATE" 2>/dev/null || return 0
+  now=$(hyprctl version 2>/dev/null | sed -n 's/.*at commit \([0-9a-f]\{7,\}\).*/\1/p' | head -1)
+  tag=$(hyprctl version 2>/dev/null | sed -n 's/^Tag: \([^,]*\).*/\1/p' | head -1)
+  built_tag=$(sed -n 's/^HYPRLAND_TAG=//p' "$BUILT" 2>/dev/null | head -1)
+  {
+    echo "SO=$SO"
+    echo "RUNNING_COMMIT=$now"
+    echo "RUNNING_TAG=$tag"
+    echo "BUILT_TAG=$built_tag"
+    echo "AT=$(date -Is)"
+  } > "$STATE/plugin-failed.tmp" && mv -f "$STATE/plugin-failed.tmp" "$STATE/plugin-failed"
+
+  stamp="$STATE/notified-${now:-unknown}"
+  [[ -e $stamp ]] && return 0
+  : > "$stamp"
+  command -v omarchy-notification-send >/dev/null 2>&1 || return 0
+  if [[ -n $built_tag && -n $tag && $built_tag != "$tag" ]]; then
+    omarchy-notification-send -u normal -g 󰖯 \
+      "OS 99 window frames are not loaded" \
+      "Built for Hyprland $built_tag, running $tag. Click OS 99 in the status bar to rebuild, or run os99-hyprbars-rebuild." \
+      >/dev/null 2>&1 || true
+  else
+    omarchy-notification-send -u normal -g 󰖯 \
+      "OS 99 window frames are not loaded" \
+      "The frame plugin did not load. Click OS 99 in the status bar to rebuild, or run os99-hyprbars-rebuild." \
+      >/dev/null 2>&1 || true
+  fi
+}
 # Upstream hyprbars, if the distro ships it -- only ever used to UNLOAD it, so
 # that it and this fork cannot both be resident. Located rather than assumed:
 # /usr/lib is wrong on NixOS and on multilib layouts. Empty is fine, it just
@@ -270,6 +317,12 @@ if ! hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   hyprctl plugin load "$SO" >/dev/null 2>&1
   fresh=1
   sleep 0.4
+fi
+
+if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+  note_plugin_ok
+else
+  note_plugin_failed
 fi
 
 # ---------------------------------------------------------------------------

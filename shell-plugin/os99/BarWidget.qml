@@ -125,6 +125,14 @@ BarWidget {
 
   // Setup state, from os99-install --status.
   property var setupSteps: []
+  // The words come from os99-install, not from here. What is outstanding on a
+  // fresh machine and what is outstanding after a Hyprland upgrade are two
+  // different sentences, and only the script can tell them apart -- calling a
+  // rebuild "setup" would tell somebody who has run this for months that their
+  // install never finished.
+  property string setupHeadline: "Finish setting up OS 99"
+  property string setupAction: "Set up OS 99"
+  property string setupReason: ""
   property bool setupReady: true
   property bool setupRunning: false
   property string setupLine: ""
@@ -204,6 +212,9 @@ BarWidget {
     if (state.helperError !== undefined) root.helperError = state.helperError
     if (state.setupSteps !== undefined) root.setupSteps = state.setupSteps
     if (state.setupReady !== undefined) root.setupReady = state.setupReady
+    if (state.setupHeadline !== undefined) root.setupHeadline = state.setupHeadline
+    if (state.setupAction !== undefined) root.setupAction = state.setupAction
+    if (state.setupReason !== undefined) root.setupReason = state.setupReason
     if (state.setupRunning !== undefined) root.setupRunning = state.setupRunning
     if (state.setupLine !== undefined) root.setupLine = state.setupLine
   }
@@ -442,7 +453,12 @@ BarWidget {
         }
         root.setupSteps = out
         root.setupReady = s.ready === true
-        root.publish({ setupSteps: root.setupSteps, setupReady: root.setupReady })
+        root.setupHeadline = root.clean(s.headline || "") || "Finish setting up OS 99"
+        root.setupAction = root.clean(s.action || "") || "Set up OS 99"
+        root.setupReason = root.clean(s.reason || "")
+        root.publish({ setupSteps: root.setupSteps, setupReady: root.setupReady,
+                       setupHeadline: root.setupHeadline, setupAction: root.setupAction,
+                       setupReason: root.setupReason })
       }
     }
   }
@@ -617,7 +633,7 @@ BarWidget {
 
       Text {
         text: root.helperError !== "" ? root.helperError
-              : (!root.setupReady ? "Finish setting up OS 99" : "Minimized")
+              : (!root.setupReady ? root.setupHeadline : "Minimized")
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -665,9 +681,13 @@ BarWidget {
       Text {
         visible: root.helperError === "" && !root.setupReady && !root.setupRunning
         width: column.width
-        text: "Setting up copies the theme in, draws the window art at this "
-              + "display's scale, builds the frame plugin against your Hyprland "
-              + "(a few minutes), and switches to OS 99 Platinum."
+        text: root.setupReason === "stale"
+              ? "Hyprland plugins are tied to the Hyprland they were built "
+                + "against, so an upgrade stops this one loading and the window "
+                + "frames go with it. Rebuilding takes a few minutes."
+              : "Setting up copies the theme in, draws the window art at this "
+                + "display's scale, builds the frame plugin against your Hyprland "
+                + "(a few minutes), and switches to OS 99 Platinum."
         color: root.foreground
         opacity: 0.7
         font.family: root.fontFamily
@@ -690,7 +710,7 @@ BarWidget {
         Text {
           id: setupLabel
           anchors.centerIn: parent
-          text: "Set up OS 99"
+          text: root.setupAction
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.body

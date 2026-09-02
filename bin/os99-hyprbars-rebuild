@@ -11,6 +11,7 @@ SRC="${OS99_PLUGIN_SRC:-$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/plugi
 [[ -d $SRC ]] || SRC="$HOME/dev/os-99/plugin/hyprbars"
 LIBDIR="$HOME/.local/lib"
 PTR="$LIBDIR/libhyprbars-os99.path"      # names the .so the hook should load
+BUILT="$LIBDIR/libhyprbars-os99.built"   # names the Hyprland it was built FOR
 
 echo "Hyprland:      $(hyprctl version | head -1)"
 echo "pkg-config:    $(pkg-config --modversion hyprland)"
@@ -102,6 +103,19 @@ fi
 install -m755 hyprbars.so "$NEW.tmp"
 mv -f "$NEW.tmp" "$NEW"
 echo "$NEW" > "$PTR"
+
+# Record the Hyprland this was compiled against. Plugins are ABI-pinned, so
+# after a Hyprland upgrade the .so simply stops loading and the window frames
+# disappear with no error anyone sees. Comparing this against the running
+# Hyprland turns that into a diagnosis -- "built for v0.56.2, running v0.57.0"
+# -- which is the difference between a bar that offers to fix it and a desktop
+# that has quietly lost its title bars.
+{
+  echo "SO=$NEW"
+  echo "HYPRLAND_COMMIT=$(hyprctl version 2>/dev/null | sed -n 's/.*at commit \([0-9a-f]\{7,\}\).*/\1/p' | head -1)"
+  echo "HYPRLAND_TAG=$(hyprctl version 2>/dev/null | sed -n 's/^Tag: \([^,]*\).*/\1/p' | head -1)"
+  echo "BUILT_AT=$(date -Is)"
+} > "$BUILT.tmp" && mv -f "$BUILT.tmp" "$BUILT"
 
 # NEVER delete an old build. That claim -- "safe to remove, the inode stays
 # alive" -- is what took the session down a second time on 2026-08-20 with a
