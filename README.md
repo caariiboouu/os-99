@@ -41,49 +41,80 @@ top-left and a 1px shadow on the bottom-right.
 
 ## Install
 
-### 1. The plugin
+On Omarchy, one command and one click:
 
 ```
+omarchy plugin add https://github.com/caariiboouu/os-99 --enable
+```
+
+Then click **OS 99** in the status bar and press **Set up OS 99**.
+
+That is the whole install. The click exists because `omarchy plugin add` clones
+and enables a plugin but, by design, never runs its code — so it cannot copy a
+theme into place, draw the window art at your display's scale, or build the
+compositor plugin that draws the frames. Those steps used to live further down
+this page, which meant the install was only finished for someone who read this
+far. Now the widget asks what is still outstanding, says so in the bar, and
+offers to do it; the popup lists every step with a tick or a dot, so you can see
+what it is about to do before it does it. It takes a few minutes, almost all of
+it compiling the frame plugin against your own Hyprland.
+
+Nothing happens without that click. The outstanding work includes building
+native code into the compositor and switching your theme, and neither is a thing
+to do to somebody quietly.
+
+### Doing it by hand
+
+The same steps, if you would rather run them yourself:
+
+```
+# 1. the compositor plugin that draws the frames
 hyprpm add https://github.com/caariiboouu/os-99
 hyprpm enable hyprbars-os99
 hyprpm reload -n
+
+# 2. the theme, the art, the hooks and the bar widget
+omarchy plugin add https://github.com/caariiboouu/os-99 --enable
+~/.config/omarchy/plugins/io.github.caariiboouu.os-99/bin/os99-install
+
+# 3. wear it
+omarchy theme set "OS 99 Platinum"
 ```
 
-Same repository — the plugin source is in [`plugin/`](plugin/). `hyprpm` builds
-it against your own Hyprland, so there is no ABI mismatch to manage.
+`os99-install --auto` does all of 2 and 3, and 1 as well when the plugin is not
+already loaded — it is what the button runs. `--check` reports without changing
+anything, and `--status` answers the same questions as JSON. A plain `git clone`
+works too: run `./bin/os99-install` from the checkout.
 
-This is compositor-native code, so what gets built is pinned rather than left at
-whatever the branch says today: [`hyprpm.toml`](hyprpm.toml) carries a
-`commit_pins` entry binding Hyprland **v0.56.2** to a fixed commit of this
-repository, and `hyprpm` checks that commit out before building. A Hyprland
-version with no pin falls back to `HEAD`, because `hyprpm` offers nothing else
-for one — pins are added as each version is actually built and tested here.
+`os99-install` is safe to re-run, and re-running it is the fix for most things.
+It checks prerequisites, matches the art to your display, resolves the font,
+installs the hooks, and registers the menu-bar font widget.
+
+### About the compositor plugin
+
+`hyprpm` builds it against your own Hyprland, so there is no ABI mismatch to
+manage. The source is in [`plugin/`](plugin/) — same repository, so there is one
+URL to install and one place to file issues. [`hyprpm.toml`](hyprpm.toml) carries
+a `commit_pins` entry binding a tested Hyprland release to a fixed commit of this
+repository, so what gets compiled into the compositor is a reviewed tree rather
+than a moving branch; a Hyprland version with no pin falls back to `HEAD`,
+because `hyprpm` offers nothing else for one.
 
 It derives from [hyprbars](https://github.com/hyprwm/hyprland-plugins) and keeps
 its BSD 3-Clause licence; [`plugin/README.md`](plugin/README.md) lists what was
 changed and why. It still reports itself to Hyprland as `hyprbars`, so it cannot
 be loaded alongside upstream hyprbars — pick one.
 
-### 2a. On Omarchy
-
-```
-omarchy plugin add https://github.com/caariiboouu/os-99 --enable
-~/.config/omarchy/plugins/io.github.caariiboouu.os-99/bin/os99-install
-omarchy theme set "OS 99 Platinum"
-```
-
-The first line installs the bar widget the collapse box needs and leaves a
-checkout of this repository in place; the second does the per-machine work.
-A plain `git clone` works too — run `./bin/os99-install` from the checkout.
+### About the helpers
 
 `omarchy plugin add` clones the whole repository into the plugins directory, so
 the widget's helpers (`bin/os99-run`, `os99-minimize`, `os99-buttons`,
-`os99-menubar-font`) arrive with the widget and stay with it. The QML finds them
-by walking up from its own file rather than by looking on `$PATH`, so the copy
-that answers the bar is always the copy that shipped with the bar. When they are
-genuinely missing, the widget says so in the status bar and names the directory
-it looked in — it does not go quiet and leave you wondering where a minimized
-window went.
+`os99-menubar-font`, `os99-install`) arrive with the widget and stay with it. The
+QML finds them by walking up from its own file rather than by looking on `$PATH`,
+so the copy that answers the bar is always the copy that shipped with the bar.
+When they are genuinely missing, the widget says so in the status bar and names
+the directory it looked in — it does not go quiet and leave you wondering where a
+minimized window went.
 
 `omarchy plugin update` is a fast-forward pull of that checkout, so it only works
 for the route that made one. `os99-install` run from a `git clone` elsewhere
@@ -91,12 +122,7 @@ copies the widget into place instead, which is a normal plugin directory in ever
 way except that it has no `.git` — update it by re-running `os99-install` from
 the checkout you pulled.
 
-`os99-install` is safe to re-run, and re-running it is the fix for most things.
-It checks prerequisites, matches the art to your display, resolves the font,
-installs the hooks, and registers the menu-bar font widget. `--check` reports
-without changing anything.
-
-### 2b. On plain Hyprland
+### On plain Hyprland
 
 ```
 git clone https://github.com/caariiboouu/os-99

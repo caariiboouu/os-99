@@ -3,6 +3,14 @@
 #
 #   os99-install            detect, fix what is safe to fix, report the rest
 #   os99-install --check    report only, change nothing
+#   os99-install --status   the same questions, answered as JSON, changing
+#                           nothing and touching no art -- what the bar widget
+#                           reads to know whether setup is still outstanding
+#   os99-install --auto     finish the job: everything --check would fix, plus
+#                           building and loading the compositor plugin and
+#                           applying the theme. This is what the widget's
+#                           "Set up OS 99" runs, so that installing the plugin
+#                           is the whole install and nothing is left in a README
 #
 # The theme is not one artefact. It is art baked at this display's scale, a
 # forked hyprbars plugin, two theme-set hooks, a config file and a shell plugin,
@@ -16,6 +24,8 @@
 set -uo pipefail
 
 CHECK=false
+AUTO=false
+STATUS=false
 # Unknown arguments must not fall through to a real install. They used to: any
 # flag that was not --check simply left CHECK=false, so `os99-install --help`
 # quietly performed a full install -- copying plugins, rewriting hooks, and
@@ -23,10 +33,12 @@ CHECK=false
 case "${1:-}" in
   "")        ;;
   --check)   CHECK=true ;;
-  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \?//'; exit 0 ;;
+  --status)  STATUS=true ;;
+  --auto)    AUTO=true ;;
+  -h|--help) sed -n '2,24p' "$0" | sed 's/^# \?//'; exit 0 ;;
   *)
     echo "os99-install: unknown option '$1'" >&2
-    echo "usage: os99-install [--check]" >&2
+    echo "usage: os99-install [--check | --status | --auto]" >&2
     exit 2
     ;;
 esac
@@ -46,6 +58,83 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || \
   export HYPRLAND_INSTANCE_SIGNATURE=$(ls -t "${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr" 2>/dev/null | head -1)
+
+# Where this came from, for hyprpm. The plugin directory left by
+# `omarchy plugin add` is a git checkout, so it knows its own origin; the
+# constant is only the fallback for a copy that has lost it.
+repo_url() {
+  local here url
+  here=$(cd -- "$(dirname -- "$(readlink -f "$0")")/.." && pwd) || here=""
+  if [[ -n $here && -d $here/.git ]]; then
+    url=$(git -C "$here" remote get-url origin 2>/dev/null) || url=""
+    [[ -n $url ]] && { printf '%s\n' "$url"; return 0; }
+  fi
+  printf '%s\n' "https://github.com/caariiboouu/os-99"
+}
+
+# ------------------------------------------------------------------ 0. status
+# Every question the report below asks, answered as JSON and answered CHEAPLY:
+# no art is drawn, nothing is copied, nothing is written. The bar widget calls
+# this on every start to decide whether to offer setup, so it has to be the kind
+# of thing that can run on every start.
+#
+# `fixable` is the honest half. A step this script can finish gets offered as a
+# button; one it cannot -- a missing python3 -- gets shown with the command that
+# does fix it, because the point of all this is that nobody has to go and find a
+# README to learn what is left.
+if $STATUS; then
+  THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
+  st_deps=false;   command -v python3 >/dev/null 2>&1 && command -v hyprctl >/dev/null 2>&1 &&
+                   python3 -c 'import tomllib' 2>/dev/null && st_deps=true
+  st_files=false;  [[ -f $TOML && -f $GEN && -f $HOOKS/os99-bars-hook.sh ]] && st_files=true
+  st_art=false;    [[ -f $HOME/.config/omarchy/themes/os-99-platinum/decor/bar.env ]] && st_art=true
+  # Read directly rather than through shelljson(): that is defined further
+  # down, and this path exits before reaching it.
+  st_widget=false
+  if [[ -f $HOME/.config/omarchy/shell.json ]] && python3 - \
+       "$HOME/.config/omarchy/shell.json" "$PLUGIN_ID" <<'PYEOF' 2>/dev/null
+import json, os, sys
+path = os.path.realpath(sys.argv[1])
+fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+with os.fdopen(fd, "r", encoding="utf-8") as fh:
+    d = json.load(fh)
+lay = d.get("bar", {}).get("layout", {})
+listed = [w.get("id") for sec in lay.values() for w in sec]
+sys.exit(0 if sys.argv[2] in listed else 1)
+PYEOF
+  then st_widget=true; fi
+  st_plugin=false; hyprctl plugin list 2>/dev/null | grep -q hyprbars && st_plugin=true
+  st_theme=false;  [[ $THEME_NAME == os-99-* ]] && st_theme=true
+  st_hyprpm=false; command -v hyprpm >/dev/null 2>&1 && st_hyprpm=true
+
+  DEPS=$st_deps FILES=$st_files ART=$st_art WIDGET=$st_widget PLUGIN=$st_plugin \
+  THEME=$st_theme HYPRPM=$st_hyprpm URL="$(repo_url)" python3 -c '
+import json, os
+
+def flag(name):
+    return os.environ[name] == "true"
+
+steps = [
+    ("deps",   "python3 and hyprctl",       flag("DEPS"),   flag("DEPS"),
+     "install python3 (3.11+) and Hyprland"),
+    ("files",  "theme files and hooks",     flag("FILES"),  True,  ""),
+    ("art",    "window art for this display", flag("ART"),  True,  ""),
+    ("widget", "widget on the status bar",  flag("WIDGET"), True,  ""),
+    ("plugin", "window frames (hyprbars)",  flag("PLUGIN"), flag("HYPRPM"),
+     "install hyprpm (it ships with Hyprland)"),
+    ("theme",  "OS 99 theme applied",       flag("THEME"),  True,  ""),
+]
+rows = [{"id": i, "label": l, "done": d, "fixable": f, "hint": h}
+        for (i, l, d, f, h) in steps]
+print(json.dumps({
+    "ready": all(r["done"] for r in rows),
+    "canFix": all(r["done"] or r["fixable"] for r in rows),
+    "url": os.environ["URL"],
+    "steps": rows,
+}))
+'
+  exit 0
+fi
 
 # --------------------------------------------------------------------- 1. deps
 head_ "Prerequisites"
@@ -118,7 +207,10 @@ else
       # different os99-minimize earlier in someone's PATH being the one that
       # runs. `omarchy plugin add` clones the whole repository and so brings
       # these along by itself; this is the other route saying the same thing.
-      for h in os99-run os99-minimize os99-buttons os99-menubar-font os99-theme-reload; do
+      # os99-install itself goes too: the widget offers to finish the setup,
+      # and it can only do that if the thing that finishes it is beside it.
+      for h in os99-run os99-minimize os99-buttons os99-menubar-font \
+               os99-theme-reload os99-install; do
         install -m755 "$REPO/bin/$h" "$plugdir/bin/$h"
       done
       good "bar widget + helpers -> ~/.config/omarchy/plugins/$PLUGIN_ID"
@@ -415,31 +507,70 @@ if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   good "loaded"
 elif [[ -r $HOME/.local/lib/libhyprbars-os99.path ]]; then
   note "built but not loaded -- run os99-window-bars"
+elif $AUTO && command -v hyprpm >/dev/null 2>&1; then
+  # Only ever from HERE: nothing is loaded, so there is no live plugin for a
+  # reload to pull out from under the compositor. On a machine where the fork
+  # IS loaded this branch is unreachable, which is deliberate -- reloading
+  # plugins under a running Hyprland is the one operation that can take the
+  # session down with it.
+  say "building the window-frame plugin against your Hyprland."
+  say "This compiles Hyprland's headers and takes a few minutes."
+  hyprpm add "$(repo_url)" >/dev/null 2>&1 || true   # already added is fine
+  if hyprpm enable hyprbars-os99 >/dev/null 2>&1 && hyprpm reload -n >/dev/null 2>&1 \
+     && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+    good "built, enabled and loaded"
+  else
+    bad "hyprpm could not build it. Run it by hand to see why:"
+    say "      hyprpm add $(repo_url)"
+    say "      hyprpm enable hyprbars-os99 && hyprpm reload -n"
+  fi
 else
   bad "not installed. On another machine this is the step that needs doing:"
-  say "      hyprpm add https://github.com/caariiboouu/os-99"
+  say "      hyprpm add $(repo_url)"
   say "      hyprpm enable hyprbars-os99 && hyprpm reload -n"
 fi
 
 # ---------------------------------------------------------------- 7. looknfeel
 head_ "Hyprland look-and-feel"
-# A theme's own hyprland.lua is loaded BEFORE the user's looknfeel.lua, so the
-# user's file wins on rounding and blur. Rounded corners and a nine-patch frame
-# are mutually exclusive, so this has to be right or the corners get clipped.
+# Rounded corners and a nine-patch frame are mutually exclusive: rounding CLIPS
+# the frame. This used to be the user's problem, because a theme's hyprland.lua
+# loads BEFORE looknfeel.lua and so loses to it. The plugin now sets rounding 0
+# and no-blur as a per-WINDOW rule on framed windows (frame_force_square and
+# frame_force_flat, both on by default), which outranks any global setting --
+# so there is nothing here anyone has to edit, and a looknfeel.lua branch left
+# over from before is simply redundant.
 if [[ -f $LOOKNFEEL ]] && grep -q "os99.marker" "$LOOKNFEEL"; then
-  good "looknfeel.lua branches on os99.marker (rounding/blur off for OS 9)"
+  note "looknfeel.lua still branches on os99.marker -- harmless, no longer needed"
 else
-  bad "looknfeel.lua does not branch on os99.marker"
-  say "      Rounded corners will clip the frame. Until the plugin forces this"
-  say "      itself, looknfeel.lua needs: if theme_ships(\"os99.marker\") then"
-  say "      rounding = 0, blur disabled."
+  good "nothing to edit: the plugin forces square, flat frames per window"
+fi
+
+# -------------------------------------------------------------------- 8. theme
+head_ "Theme"
+THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
+if [[ $THEME_NAME == os-99-* ]]; then
+  good "applied ($THEME_NAME)"
+elif $CHECK; then
+  bad "not applied (--check: not changing it)"
+elif $AUTO && command -v omarchy >/dev/null 2>&1; then
+  say "applying Os 99 Platinum"
+  if omarchy theme set "Os 99 Platinum" >/dev/null 2>&1; then
+    good "applied"
+  else
+    bad "could not apply -- run: omarchy theme set \"Os 99 Platinum\""
+  fi
+else
+  bad "not applied yet -- run: omarchy theme set \"Os 99 Platinum\""
 fi
 
 head_ "Summary"
 printf '  %d ok, %d note, %d missing\n' "$ok" "$warn" "$fail"
 if (( fail == 0 )); then
-  say "Ready. Apply with:  omarchy theme set \"Os 99 Platinum\""
+  say "Ready."
+elif $AUTO; then
+  say "Some of it needs you: work through the 'miss' lines above."
 else
-  say "Work through the 'miss' lines above, then re-run os99-install."
+  say "Work through the 'miss' lines above, or run os99-install --auto to have"
+  say "them done for you."
 fi
 exit 0

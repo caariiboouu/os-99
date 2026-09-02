@@ -5,9 +5,22 @@ import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 
-// The OS 99 bar widget: the way back from the collapse box, and the menu-bar
-// face. One widget because the marketplace lists one plugin per repository,
-// and these two only ever ship together.
+// The OS 99 bar widget: the way back from the collapse box, the menu-bar face,
+// and -- on a machine where OS 99 has only just been installed -- the thing
+// that finishes installing it.
+//
+// One widget because the marketplace lists one plugin per repository, and these
+// only ever ship together.
+//
+// FINISHING THE INSTALL. `omarchy plugin add` clones and enables; by design it
+// never runs a plugin's code, so it cannot copy a theme into place, draw art at
+// your display's scale, or build the compositor plugin that draws the frames.
+// Those steps used to live in the README, which meant the install was only
+// complete for someone who read to the end of it. Instead this widget asks
+// os99-install what is still outstanding and, when something is, says so in the
+// bar and offers to do it. Nothing happens without a click: the outstanding
+// work includes compiling a plugin into the compositor and switching the theme,
+// which are not things to do to somebody quietly.
 //
 // MINIMIZED WINDOWS. OS 99's title bar minimises a window by parking it on the
 // os99-minimized workspace (see bin/os99-minimize). A parked window has no bar
@@ -33,11 +46,10 @@ import qs.Ui
 //
 // Nothing here composes a shell command, and nothing here trusts $PATH. Every
 // helper is named by an absolute path derived from THIS FILE's own location,
-// so the widget uses the copy that shipped in the same install as itself --
-// there is no separate step that has to have put something in ~/.local/bin
-// first, and no way for a different os99-minimize earlier in someone's PATH to
-// be the one that runs. When a helper genuinely is not there, the widget says
-// so in the bar rather than failing silently (see helperError).
+// so the widget uses the copy that shipped in the same install as itself, and
+// there is no way for a different os99-minimize earlier in someone's PATH to be
+// the one that runs. When a helper genuinely is not there, the widget says so
+// in the bar rather than failing silently (see helperError).
 //
 // Every helper runs under bin/os99-run, which owns its lifetime: a wall-clock
 // deadline, separate caps on stdout and stderr enforced as the bytes arrive,
@@ -69,6 +81,7 @@ BarWidget {
   readonly property string runner: pluginRoot + "bin/os99-run"
   readonly property string minimizer: pluginRoot + "bin/os99-minimize"
   readonly property string fontProbe: pluginRoot + "bin/os99-menubar-font"
+  readonly property string installer: pluginRoot + "bin/os99-install"
 
   // Seconds a helper may take, and bytes it may say. A list of parked windows
   // is a few hundred bytes; anything approaching these numbers is a fault, not
@@ -78,6 +91,8 @@ BarWidget {
   // hyprctl dispatch per window. Reading gets the short deadline, acting gets
   // one sized to the act.
   readonly property int actDeadline: 20
+  // Setup compiles a Hyprland plugin from source. Minutes, not seconds.
+  readonly property int setupDeadline: 900
   readonly property int maxStdout: 65536
   readonly property int maxStderr: 4096
   // Rows a menu can show and a field length it can show them at. Bounded in
@@ -108,10 +123,16 @@ BarWidget {
   // someone a window they cannot find.
   property string helperError: ""
 
-  // The bar stays quiet until it has news -- something minimized, or something
-  // wrong. The font probe still runs: a Process does not care that its widget
-  // is collapsed to nothing.
-  visible: count > 0 || helperError !== ""
+  // Setup state, from os99-install --status.
+  property var setupSteps: []
+  property bool setupReady: true
+  property bool setupRunning: false
+  property string setupLine: ""
+
+  // The bar stays quiet until it has news -- something minimized, something
+  // wrong, or an install still to finish. The font probe still runs: a Process
+  // does not care that its widget is collapsed to nothing.
+  visible: count > 0 || helperError !== "" || !setupReady
 
   // A vertical bar stacks the mark over the count and grows downwards; a
   // horizontal one sets them side by side and grows sideways. This used to
@@ -151,37 +172,7 @@ BarWidget {
     }
   }
 
-  // --------------------------------------------------------------- the list
-
-  // Rows arrive one line at a time and are counted as they arrive, so a helper
-  // that somehow produced a million of them is stopped rather than collected.
-  property var pending: []
-  property int rowsSeen: 0
-  property string listerStderr: ""
-
-  function clean(s) {
-    // Control characters out (a title carrying a newline or a tab could
-    // otherwise forge a row), then cut to a length a menu can show.
-    return String(s).replace(/[\x00-\x1f\x7f]/g, " ").substring(0, root.maxField)
-  }
-
-  function takeRow(line) {
-    if (line.length === 0)
-      return
-    root.rowsSeen++
-    if (root.rowsSeen > root.maxRows) {
-      // Seen enough. Stop the helper rather than keep reading it.
-      root.abort(lister)
-      return
-    }
-    var f = line.split("\t")
-    // N, address, class, title -- anything shorter is not a row we wrote.
-    if (f.length < 4)
-      return
-    if (!/^0x[0-9a-fA-F]+$/.test(f[1]))
-      return
-    root.pending.push({ address: f[1], appClass: root.clean(f[2]), title: root.clean(f[3]) })
-  }
+  // ------------------------------------------------------- one poller only
 
   // A bar surface is built per monitor, so this widget is live once per screen
   // and every copy would ask the same question and get the same answer. Three
@@ -202,20 +193,72 @@ BarWidget {
     return all.length === 0 || all[0] === root
   }
 
-  // Called ON a peer BY the poller. Never starts anything of its own.
-  function adopt(rows, fault) {
-    root.entries = rows
-    root.helperError = fault
-    if (rows.length === 0)
-      root.popupOpen = false
+  // Called ON a peer BY whichever instance learned something. Never starts
+  // anything of its own.
+  function adopt(state) {
+    if (state.entries !== undefined) {
+      root.entries = state.entries
+      if (root.entries.length === 0)
+        root.popupOpen = false
+    }
+    if (state.helperError !== undefined) root.helperError = state.helperError
+    if (state.setupSteps !== undefined) root.setupSteps = state.setupSteps
+    if (state.setupReady !== undefined) root.setupReady = state.setupReady
+    if (state.setupRunning !== undefined) root.setupRunning = state.setupRunning
+    if (state.setupLine !== undefined) root.setupLine = state.setupLine
   }
 
-  function publish() {
+  function publish(state) {
     var all = root.instances()
     for (var i = 0; i < all.length; i++) {
       if (all[i] !== root && all[i] && typeof all[i].adopt === "function")
-        all[i].adopt(root.entries, root.helperError)
+        all[i].adopt(state)
     }
+  }
+
+  // --------------------------------------------------------------- the list
+
+  // Rows arrive one line at a time and are counted as they arrive, so a helper
+  // that somehow produced a million of them is stopped rather than collected.
+  property var pending: []
+  property int rowsSeen: 0
+  property string listerStderr: ""
+
+  // PopupCard dismisses itself by calling close() on its owner when one exists,
+  // and only falls back to writing its own `open` property when it does not --
+  // and that write lands on a property BOUND to popupOpen, breaking the binding
+  // and costing a click the next time round. Owning the close keeps the one
+  // source of truth.
+  function close() {
+    root.popupOpen = false
+  }
+
+  function clean(s) {
+    // Control characters out (a title carrying a newline or a tab could
+    // otherwise forge a row), then cut to a length a menu can show. The escape
+    // sequences go too: os99-install colours its output, and a bar is not a
+    // terminal.
+    return String(s).replace(/\x1b\[[0-9;]*m/g, "")
+                    .replace(/[\x00-\x1f\x7f]/g, " ")
+                    .substring(0, root.maxField)
+  }
+
+  function takeRow(line) {
+    if (line.length === 0)
+      return
+    root.rowsSeen++
+    if (root.rowsSeen > root.maxRows) {
+      // Seen enough. Stop the helper rather than keep reading it.
+      root.abort(lister)
+      return
+    }
+    var f = line.split("\t")
+    // N, address, class, title -- anything shorter is not a row we wrote.
+    if (f.length < 4)
+      return
+    if (!/^0x[0-9a-fA-F]+$/.test(f[1]))
+      return
+    root.pending.push({ address: f[1], appClass: root.clean(f[2]), title: root.clean(f[3]) })
   }
 
   function refresh() {
@@ -307,7 +350,7 @@ BarWidget {
       if (root.entries.length === 0)
         root.popupOpen = false
       root.helperError = root.helperFault(code)
-      root.publish()
+      root.publish({ entries: root.entries, helperError: root.helperError })
     }
   }
 
@@ -370,6 +413,96 @@ BarWidget {
     root.act(["restore", address])
   }
 
+  // --------------------------------------------------------------- the setup
+
+  // os99-install --status is read-only and cheap by construction: it draws no
+  // art, copies nothing and writes nothing, so it is safe to ask on every
+  // start and after every run.
+  Process {
+    id: statuser
+    running: true
+    command: root.helperArgv(root.installer, ["--status"], 16384)
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var s
+        try {
+          s = JSON.parse(String(text).substring(0, 16384))
+        } catch (e) {
+          return   // not answering is not the same as answering "not ready"
+        }
+        var rows = Array.isArray(s.steps) ? s.steps : []
+        var out = []
+        for (var i = 0; i < rows.length && out.length < 16; i++) {
+          out.push({ id: String(rows[i].id || ""),
+                     label: root.clean(rows[i].label),
+                     done: rows[i].done === true,
+                     fixable: rows[i].fixable === true,
+                     hint: root.clean(rows[i].hint || "") })
+        }
+        root.setupSteps = out
+        root.setupReady = s.ready === true
+        root.publish({ setupSteps: root.setupSteps, setupReady: root.setupReady })
+      }
+    }
+  }
+
+  function checkSetup() {
+    if (statuser.running || setup.running)
+      return
+    statuser.running = true
+  }
+
+  function runSetup() {
+    if (setup.running || root.setupReady)
+      return
+    root.setupRunning = true
+    root.setupLine = "starting"
+    root.publish({ setupRunning: true, setupLine: root.setupLine })
+    setup.command = root.helperArgv(root.installer, ["--auto"], 65536, root.setupDeadline)
+    setupWatchdog.restart()
+    setup.running = true
+  }
+
+  Process {
+    id: setup
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: line => {
+        var t = root.clean(line).trim()
+        if (t.length === 0)
+          return
+        root.setupLine = t
+        root.publish({ setupLine: t })
+      }
+    }
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: line => {
+        var t = root.clean(line).trim()
+        if (t.length > 0) {
+          root.setupLine = t
+          root.publish({ setupLine: t })
+        }
+      }
+    }
+    onExited: (code, status) => {
+      setupWatchdog.stop()
+      root.setupRunning = false
+      root.publish({ setupRunning: false })
+      root.checkSetup()
+    }
+  }
+
+  Timer {
+    id: setupWatchdog
+    interval: (root.setupDeadline + 5) * 1000
+    onTriggered: {
+      root.setupLine = "setup did not finish in time"
+      root.abort(setup)
+    }
+  }
+
   // Coalesces bursts. Minimising one window emits several Hyprland events, and
   // each would otherwise start its own helper.
   Timer {
@@ -393,6 +526,16 @@ BarWidget {
     running: true
     repeat: true
     onTriggered: root.refresh()
+  }
+
+  // Setup does not change on its own, so this asks rarely -- often enough to
+  // notice a theme switched away from OS 99 or a plugin that stopped loading,
+  // never often enough to be a poll.
+  Timer {
+    interval: 60000
+    running: true
+    repeat: true
+    onTriggered: { if (root.isPoller()) root.checkSetup() }
   }
 
   // ------------------------------------------------------------------- face
@@ -434,7 +577,11 @@ BarWidget {
     }
 
     Text {
-      text: root.helperError === "" ? root.count : "!"
+      // An unfinished install says its own name: an item labelled OS 99 in the
+      // bar is something to click, where a bare count is not.
+      text: root.helperError !== "" ? "!"
+            : (!root.setupReady ? (root.setupRunning ? "OS 99 …" : "OS 99")
+                                : String(root.count))
       color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
@@ -444,9 +591,12 @@ BarWidget {
 
   MouseArea {
     anchors.fill: parent
-    enabled: root.count > 0 || root.helperError !== ""
+    enabled: root.count > 0 || root.helperError !== "" || !root.setupReady
     onClicked: {
-      root.refresh()
+      if (root.setupReady)
+        root.refresh()
+      else
+        root.checkSetup()
       root.popupOpen = !root.popupOpen
     }
   }
@@ -457,7 +607,7 @@ BarWidget {
     owner: root
     bar: root.bar
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(320))
+    contentWidth: popup.fittedContentWidth(Style.space(360))
     contentHeight: popup.fittedContentHeight(column.implicitHeight)
 
     Column {
@@ -466,7 +616,8 @@ BarWidget {
       spacing: Style.space(6)
 
       Text {
-        text: root.helperError === "" ? "Minimized" : root.helperError
+        text: root.helperError !== "" ? root.helperError
+              : (!root.setupReady ? "Finish setting up OS 99" : "Minimized")
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -476,8 +627,8 @@ BarWidget {
         elide: Text.ElideRight
       }
 
-      // What to do about it, named exactly. The CLI keeps working whatever
-      // this widget is doing, so the way out is always available.
+      // What to do about a missing helper, named exactly. The CLI keeps working
+      // whatever this widget is doing, so the way out is always available.
       Text {
         visible: root.helperError !== ""
         width: column.width
@@ -490,6 +641,81 @@ BarWidget {
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
       }
+
+      // ------------------------------------------------------ setup checklist
+
+      Repeater {
+        model: root.helperError === "" && !root.setupReady ? root.setupSteps : []
+
+        Text {
+          required property var modelData
+          width: column.width
+          text: (modelData.done ? "✓  " : "·  ") + modelData.label
+                + (!modelData.done && !modelData.fixable && modelData.hint.length > 0
+                   ? "  —  " + modelData.hint : "")
+          color: root.foreground
+          opacity: modelData.done ? 0.6 : 1.0
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+        }
+      }
+
+      Text {
+        visible: root.helperError === "" && !root.setupReady && !root.setupRunning
+        width: column.width
+        text: "Setting up copies the theme in, draws the window art at this "
+              + "display's scale, builds the frame plugin against your Hyprland "
+              + "(a few minutes), and switches to OS 99 Platinum."
+        color: root.foreground
+        opacity: 0.7
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+      }
+
+      Rectangle {
+        visible: root.helperError === "" && !root.setupReady && !root.setupRunning
+        width: column.width
+        height: setupLabel.implicitHeight + Style.space(10)
+        radius: 0
+        color: setupHover.hovered ? Color.popups.hover : "transparent"
+        border.color: root.foreground
+        border.width: 1
+
+        HoverHandler { id: setupHover }
+
+        Text {
+          id: setupLabel
+          anchors.centerIn: parent
+          text: "Set up OS 99"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          textFormat: Text.PlainText
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.runSetup()
+        }
+      }
+
+      Text {
+        visible: root.setupRunning
+        width: column.width
+        text: root.setupLine
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+      }
+
+      // ------------------------------------------------------ minimized list
 
       Repeater {
         model: root.entries
