@@ -790,6 +790,14 @@ else
   # eight, and looking like it had worked.
   if os99_publish_art; then
     good "art copied into the live theme"
+    # And APPLY it. Copying bars.lua into the live theme does not make the
+    # compositor read it -- os99-window-bars evals it -- so an install that
+    # stopped at the copy left the freshly drawn boxes sitting on disk while
+    # the title bar carried whatever it had before.
+    if [[ -n $(os99_sibling os99-window-bars) ]] \
+       && "$(os99_sibling os99-window-bars)" >/dev/null 2>&1; then
+      good "art applied to the running compositor"
+    fi
   fi
 fi
 
