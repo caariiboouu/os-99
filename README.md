@@ -94,11 +94,9 @@ loaded, and the button rebuilds it.
 The same steps, if you would rather run them yourself:
 
 ```
-# 1. the compositor plugin that draws the frames
-hyprpm update                 # builds Hyprland's headers; slow, and only once
-hyprpm add https://github.com/caariiboouu/os-99
-hyprpm enable hyprbars-os99
-hyprpm reload
+# 1. the compositor plugin that draws the frames -- pick ONE
+cd os-99/packaging && makepkg -si   # a package: ~90s, pinned to your Hyprland
+./bin/os99-hyprbars-rebuild         # the same build, into ~/.local/lib
 
 # 2. the theme, the art, the hooks and the bar widget
 omarchy plugin add https://github.com/caariiboouu/os-99 --enable
@@ -108,15 +106,31 @@ omarchy plugin add https://github.com/caariiboouu/os-99 --enable
 omarchy theme set "OS 99 Noir"
 ```
 
-`hyprpm update` is not optional and not a nicety: hyprpm keeps a tree of
-Hyprland headers built from source, and `hyprpm add` refuses outright — *Headers
-outdated, please run hyprpm update* — when they are missing. On a machine that
-has never used hyprpm they always are, which is to say on every machine
-installing this for the first time. It is the slow step; the ones after it take
-seconds.
+Either of those builds against the Hyprland headers your distribution already
+ships — 595 of them under `/usr/include/hyprland/` on Arch, with a `pkg-config`
+entry naming the version. The package additionally pins itself to a Hyprland
+version range, so an upgrade that would break the plugin is announced by pacman
+rather than silently taking your title bars away. See
+[`packaging/`](packaging) for the PKGBUILD and the reasoning.
+
+There is a third way, and `os99-install --auto` falls back to it when no headers
+are packaged:
+
+```
+hyprpm update                 # clones and builds HYPRLAND for headers: minutes
+hyprpm add https://github.com/caariiboouu/os-99
+hyprpm enable hyprbars-os99 && hyprpm reload
+```
+
+`hyprpm update` is not optional there — `hyprpm add` refuses outright with
+*Headers outdated, please run hyprpm update* when they are missing, which on a
+machine that has never used hyprpm they always are. It took seven and a half
+minutes here to produce headers `/usr/include/hyprland` already had, which is
+why it is the fallback and not the route.
 
 `os99-install --auto` does 2 and 3, and 1 as well when no hyprbars is loaded —
-it is what the button runs. A plain `git clone` works too: run
+it is what the button runs. For 1 it tries, in order: a plugin already built on
+this machine, then `make` against packaged headers, then hyprpm. A plain `git clone` works too: run
 `./bin/os99-install` from the checkout.
 
 `os99-install --selftest` is the gate against drift: every script still parses,
