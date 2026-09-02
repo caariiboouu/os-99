@@ -835,14 +835,14 @@ head_ "hyprbars fork"
 # supported way -- it clones Hyprland's own sources at your version and builds.
 if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   good "loaded"
-elif $AUTO && [[ -r $HOME/.local/lib/libhyprbars-os99.path ]] \
+elif $AUTO && [[ -r $HOME/.local/lib/libhyprbars-os99.path || -f /usr/lib/libhyprbars-os99.so ]] \
      && [[ -n $(os99_sibling os99-window-bars) ]] \
      && "$(os99_sibling os99-window-bars)" >/dev/null 2>&1 \
      && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   # A build already on disk that simply is not loaded costs a second to try,
   # and compiling Hyprland's headers costs minutes. Try the cheap one first.
   good "loaded the existing build"
-elif [[ -r $HOME/.local/lib/libhyprbars-os99.path ]] && ! $AUTO; then
+elif [[ -r $HOME/.local/lib/libhyprbars-os99.path || -f /usr/lib/libhyprbars-os99.so ]] && ! $AUTO; then
   note "built but not loaded -- run os99-install --auto"
 elif $AUTO && command -v hyprpm >/dev/null 2>&1; then
   # Only ever from HERE: nothing is loaded, so there is no live plugin for a

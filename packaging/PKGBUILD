@@ -1,0 +1,66 @@
+# Maintainer: Joel Cuthriell <joel@cuthriell.com>
+#
+# The frame plugin as a PACKAGE rather than a hyprpm build.
+#
+# WHY THIS EXISTS. hyprpm is Hyprland's own plugin manager and it works, but on
+# a distro that ships Hyprland's headers it does a great deal of work twice: its
+# first act on a new machine is to clone and build Hyprland from source purely
+# to get headers that are already installed. That took seven and a half minutes
+# here. Building against the packaged headers takes a hundred seconds, and
+# `pkg-config --modversion hyprland` is all it needs to find them.
+#
+# WHAT PINS IT. Hyprland plugins are ABI-pinned: a plugin built against 0.56
+# will not load into 0.57, and the failure is silent -- the window frames simply
+# do not appear. The depends() range below is what turns that into something
+# pacman says out loud. It is the same convention the upstream hyprbars package
+# uses, and the reason pkgver tracks HYPRLAND's version rather than this
+# theme's: a Hyprland release is what obsoletes the binary, so a Hyprland
+# release is what should bump the package. This theme's own version lives in
+# _os99ver and moves pkgrel.
+#
+#   makepkg -si            build and install from this directory
+#   yay -S hyprland-plugin-os99-hyprbars     once it is on the AUR
+
+_os99ver=1.2.0
+pkgname=hyprland-plugin-os99-hyprbars
+pkgver=0.56.2
+pkgrel=1
+pkgdesc="hyprbars with nine-patch frame art, for the OS 99 theme (os-99 ${_os99ver})"
+arch=('x86_64' 'aarch64')
+url="https://github.com/caariiboouu/os-99"
+license=('BSD-3-Clause')
+# The range is the whole point: a Hyprland minor bump makes this unsatisfiable
+# and you are told, rather than losing your title bars and wondering why.
+depends=("hyprland>=0.56.0" "hyprland<0.57.0")
+makedepends=('git' 'pkgconf' 'gcc')
+# Both report themselves to Hyprland as `hyprbars`, and Hyprland refuses to
+# load two plugins with the same name. Pick one.
+conflicts=('hyprland-plugin-hyprbars')
+options=('!strip' '!debug')
+source=("${pkgname}::git+${url}.git#tag=v${_os99ver}")
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/${pkgname}/plugin/hyprbars"
+  make clean
+  make -j"$(nproc)" all
+}
+
+check() {
+  cd "${srcdir}/${pkgname}/plugin/hyprbars"
+  # Just enough to catch a build that produced nothing useful. The real symbol
+  # check -- every undefined symbol resolvable against the running Hyprland --
+  # needs a running Hyprland, so it lives in os99-hyprbars-rebuild where there
+  # is one.
+  [[ -f hyprbars.so ]] || return 1
+  file -b hyprbars.so | grep -q "shared object"
+}
+
+package() {
+  cd "${srcdir}/${pkgname}"
+  install -Dm755 plugin/hyprbars/hyprbars.so \
+    "${pkgdir}/usr/lib/libhyprbars-os99.so"
+  install -Dm644 plugin/LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 plugin/README.md \
+    "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+}

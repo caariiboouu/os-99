@@ -17,7 +17,24 @@ _os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
 source "$_os99_lib" || { echo "os99-window-bars: missing $_os99_lib" >&2; exit 1; }
 
 PTR="$HOME/.local/lib/libhyprbars-os99.path"
-SO=$(cat "$PTR" 2>/dev/null || echo "$HOME/.local/lib/libhyprbars-os99.so")
+# WHERE THE .so COMES FROM, in the order it is preferred.
+#
+#   1. ~/.local/lib, named by the pointer file. A hand build: content-hashed,
+#      because Hyprland does not fully dlclose a plugin and dlopen on a
+#      previously-seen PATH hands back the stale handle. That is a development
+#      loop, and the hashed names exist for it.
+#   2. /usr/lib/libhyprbars-os99.so -- the package. One fixed path, which is
+#      fine because a package is replaced by a session, not by a reload.
+#   3. /usr/lib/libhyprbars-os99*.so -- whatever a distro chose to call it.
+#
+# A local build wins on purpose: somebody who has just rebuilt by hand means it.
+SO=""
+for _c in "$(cat "$PTR" 2>/dev/null)" \
+          "$HOME/.local/lib/libhyprbars-os99.so" \
+          /usr/lib/libhyprbars-os99.so /usr/lib64/libhyprbars-os99.so; do
+  [[ -n $_c && -f $_c ]] && { SO="$_c"; break; }
+done
+[[ -n $SO ]] || SO="$HOME/.local/lib/libhyprbars-os99.so"
 BUILT="$HOME/.local/lib/libhyprbars-os99.built"
 STATE=$(os99_state_dir)
 
