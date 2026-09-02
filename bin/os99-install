@@ -853,61 +853,77 @@ esac
 # ------------------------------------------------------------------- 6. plugin
 head_ "hyprbars fork"
 # This is the piece a theme repo genuinely cannot carry: it is a compiled .so,
-# and it must be built against the running Hyprland's headers. hyprpm is the
-# supported way -- it clones Hyprland's own sources at your version and builds.
+# and it must be built against the running Hyprland's headers.
+#
+# THREE WAYS TO GET ONE, in the order they are preferred, and the order matters
+# because they differ by minutes:
+#
+#   1. A package. /usr/lib/libhyprbars-os99.so, installed by pacman, pinned to a
+#      Hyprland version range so an upgrade is announced rather than silent.
+#      Nothing to build.
+#   2. `make` against the headers the distribution already ships. Around ninety
+#      seconds. packaging/PKGBUILD does exactly this; os99-hyprbars-rebuild does
+#      it in place, and the installed plugin directory is a checkout, so the
+#      source is right there.
+#   3. hyprpm. Its first act on a new machine is to clone and build HYPRLAND
+#      ITSELF for headers -- seven and a half minutes here, to arrive at
+#      something /usr/include/hyprland already had. It is the honest fallback
+#      for a distribution that does not package them, and nothing more.
 if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   good "loaded"
-elif $AUTO && [[ -r $HOME/.local/lib/libhyprbars-os99.path || -f /usr/lib/libhyprbars-os99.so ]] \
+elif $AUTO && [[ -f /usr/lib/libhyprbars-os99.so || -r $HOME/.local/lib/libhyprbars-os99.path ]] \
      && [[ -n $(os99_sibling os99-window-bars) ]] \
      && "$(os99_sibling os99-window-bars)" >/dev/null 2>&1 \
      && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
-  # A build already on disk that simply is not loaded costs a second to try,
-  # and compiling Hyprland's headers costs minutes. Try the cheap one first.
-  good "loaded the existing build"
-elif [[ -r $HOME/.local/lib/libhyprbars-os99.path || -f /usr/lib/libhyprbars-os99.so ]] && ! $AUTO; then
-  note "built but not loaded -- run os99-install --auto"
+  # Something is already built. Loading it costs a second; building costs
+  # minutes. Try the cheap one first.
+  good "loaded the build already on this machine"
+elif $AUTO && pkg-config --exists hyprland 2>/dev/null \
+     && [[ -n $(os99_sibling os99-hyprbars-rebuild) ]]; then
+  bp_log="$(mktemp)"
+  say "building the frame plugin against your installed Hyprland headers."
+  say "About ninety seconds."
+  if "$(os99_sibling os99-hyprbars-rebuild)" >"$bp_log" 2>&1 \
+     && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+    good "built and loaded"
+  else
+    bad "the build failed:"
+    tail -4 "$bp_log" | sed 's/^/      /'
+    say "      cd packaging && makepkg -si     # the same build, as a package"
+  fi
+  rm -f "$bp_log"
 elif $AUTO && command -v hyprpm >/dev/null 2>&1; then
-  # Only ever from HERE: nothing is loaded, so there is no live plugin for a
-  # reload to pull out from under the compositor. On a machine where the fork
-  # IS loaded this branch is unreachable, which is deliberate -- reloading
-  # plugins under a running Hyprland is the one operation that can take the
-  # session down with it.
+  # Last resort, and only from HERE: nothing is loaded, so there is no live
+  # plugin for a reload to pull out from under the compositor.
   #
-  # `hyprpm update` FIRST, and not as a nicety. hyprpm keeps a tree of Hyprland
+  # `hyprpm update` FIRST, and not as a nicety: hyprpm keeps a tree of Hyprland
   # headers built from source, and `hyprpm add` refuses outright -- "Headers
-  # outdated, please run hyprpm update" -- when they are missing or stale. On a
-  # machine that has never used hyprpm they are always missing, which is to say:
-  # on every machine installing this for the first time. Skipping it does not
-  # degrade, it fails, and it used to fail with its output thrown away.
+  # outdated, please run hyprpm update" -- when they are missing.
   hp_log="$(mktemp)"
-  say "building the window-frame plugin against your Hyprland."
-  say "The first build on a machine compiles Hyprland itself for headers,"
-  say "which is tens of minutes. Later ones are quick."
+  say "no Hyprland headers packaged; falling back to hyprpm."
+  say "It builds Hyprland from source for headers, which takes many minutes."
   if ! hyprpm update >"$hp_log" 2>&1; then
     bad "hyprpm could not build Hyprland's headers:"
     tail -3 "$hp_log" | sed 's/^/      /'
-    rm -f "$hp_log"
   else
     hyprpm add "$(repo_url)" >"$hp_log" 2>&1 || true   # already added is fine
     if hyprpm enable hyprbars-os99 >>"$hp_log" 2>&1 && hyprpm reload >>"$hp_log" 2>&1 \
        && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
       good "built, enabled and loaded"
-      rm -f "$hp_log"
     else
-      # Say WHY. The version of this that discarded hyprpm's output turned a
-      # one-line diagnosis into an afternoon.
       bad "hyprpm could not build the plugin:"
       tail -4 "$hp_log" | sed 's/^/      /'
-      say "      hyprpm update && hyprpm add $(repo_url)"
-      say "      hyprpm enable hyprbars-os99 && hyprpm reload"
-      rm -f "$hp_log"
     fi
   fi
+  rm -f "$hp_log"
+elif [[ -f /usr/lib/libhyprbars-os99.so || -r $HOME/.local/lib/libhyprbars-os99.path ]]; then
+  note "built but not loaded -- run os99-install --auto"
 else
-  bad "not installed. On another machine this is the step that needs doing:"
-  say "      hyprpm update                 # headers; the slow one, once"
-  say "      hyprpm add $(repo_url)"
-  say "      hyprpm enable hyprbars-os99 && hyprpm reload"
+  bad "not installed. Any one of these gets you a frame plugin:"
+  say "      cd packaging && makepkg -si      # a package, ~90s, pinned to Hyprland"
+  say "      os99-hyprbars-rebuild            # the same build, in ~/.local/lib"
+  say "      hyprpm update && hyprpm add $(repo_url) \\"
+  say "        && hyprpm enable hyprbars-os99 && hyprpm reload"
 fi
 
 # ---------------------------------------------------------------- 7. looknfeel

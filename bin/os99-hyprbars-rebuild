@@ -7,8 +7,16 @@
 set -e
 # The plugin source now lives inside this repository rather than in a separate
 # fork checkout, so there is one place to build from. OS99_PLUGIN_SRC overrides.
+# The source, found relative to this script: from a checkout that is
+# ../plugin/hyprbars, and the installed plugin directory IS a checkout, so the
+# copy the bar widget runs finds it too. A personal path used to be hardcoded
+# here as the fallback, which worked on exactly one machine.
 SRC="${OS99_PLUGIN_SRC:-$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/plugin/hyprbars}"
-[[ -d $SRC ]] || SRC="$HOME/dev/os-99/plugin/hyprbars"
+if [[ ! -d $SRC ]]; then
+  echo "os99-hyprbars-rebuild: no plugin source at $SRC" >&2
+  echo "  Run this from a checkout, or set OS99_PLUGIN_SRC to plugin/hyprbars." >&2
+  exit 1
+fi
 LIBDIR="$HOME/.local/lib"
 PTR="$LIBDIR/libhyprbars-os99.path"      # names the .so the hook should load
 BUILT="$LIBDIR/libhyprbars-os99.built"   # names the Hyprland it was built FOR
