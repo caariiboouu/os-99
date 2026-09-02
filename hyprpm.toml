@@ -47,7 +47,7 @@ name = "os-99"
 authors = ["Vaxry", "Joel"]
 commit_pins = [
     # Hyprland v0.56.2                        os-99
-    ["efb50993780079460b0cbed1363e2166a2de1d9f", "dec0eb3d2f1e6a7b212e37693435065bbb551577"],
+    ["efb50993780079460b0cbed1363e2166a2de1d9f", "b88b36031bc6af049acc59e22aa411d0e31b022b"],
 ]
 
 [hyprbars-os99]
