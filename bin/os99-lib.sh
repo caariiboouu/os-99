@@ -71,6 +71,25 @@ os99_state_dir() {
   printf '%s\n' "$d"
 }
 
+# ------------------------------------------------------------------- liveness
+#
+# Did OS 99's QML actually load into the running shell? A widget that failed to
+# load cannot report that it failed to load, so the question has to be asked
+# from outside -- and the plugin's panel registers an IPC target the moment it
+# is constructed, which makes "does that target answer" exactly the right
+# question. No pids, no heartbeat files, no clock skew.
+#
+#   0  loaded          1  not loaded          2  cannot tell
+#
+# NOTE for anyone tempted by `omarchy-shell -q`: quiet mode is best-effort and
+# exits 0 even when the shell, the target or the method is missing. It is
+# useless as a probe. This deliberately does not use it.
+os99_widget_loaded() {
+  command -v omarchy-shell >/dev/null 2>&1 || return 2
+  [[ -n $(pgrep -x quickshell 2>/dev/null) ]] || return 2
+  [[ $(timeout 5 omarchy-shell os99 ping 2>/dev/null) == ok ]]
+}
+
 # ----------------------------------------------------------------- helpers
 #
 # A companion script, found BESIDE this one first. The bar widget runs the copy

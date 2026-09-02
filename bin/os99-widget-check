@@ -1,0 +1,71 @@
+#!/bin/bash
+# Say something when OS 99's QML does not load into the shell.
+#
+#   os99-widget-check [seconds]
+#
+# The bar widget and the right-click menu live inside omarchy-shell, which is
+# Omarchy's process, not ours. An Omarchy or Quickshell update that renames a
+# type we extend, or reshapes a property we bind, does not produce an error
+# anybody sees: the plugin simply is not there. The minimized-window list is
+# then missing exactly when somebody has minimized a window.
+#
+# A widget that failed to load cannot report that it failed to load, so this
+# asks from outside, and it waits before deciding -- a shell that has been up
+# for two seconds has not finished loading anything.
+#
+# Notifies once per shell process. Restarting the shell asks again, which is
+# right: "still broken" is news the second time too.
+set -uo pipefail
+
+_os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
+# shellcheck source=os99-lib.sh
+source "$_os99_lib" || { echo "os99-widget-check: missing $_os99_lib" >&2; exit 1; }
+
+DEADLINE=${1:-60}
+STATE=$(os99_state_dir)
+
+# Only OS 99's own desktop is our business. Another theme means the widget is
+# not expected to be doing anything.
+THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
+[[ $THEME_NAME == os-99-* ]] || exit 0
+
+deadline=$((SECONDS + DEADLINE))
+while (( SECONDS < deadline )); do
+  os99_widget_loaded
+  case $? in
+    0) rm -f "$STATE/widget-failed"; exit 0 ;;   # loaded; nothing to say
+    2) sleep 2 ;;                                # no shell yet, keep waiting
+    *) sleep 2 ;;                                # shell up, target silent yet
+  esac
+done
+
+# Out of patience. If there is no shell at all this is not our problem to
+# report -- somebody's session is in a worse state than a missing widget.
+# The LOWEST pid, deliberately: omarchy-shell runs a small supervisor that
+# outlives the shell it restarts, so its pid is stable for the session while
+# the working child's changes every restart. Keying the notification on the
+# stable one means "your widget is broken" is said once per session and not
+# once per shell bounce.
+pid=$(pgrep -x quickshell 2>/dev/null | head -1)
+[[ -n $pid ]] || exit 0
+
+{
+  echo "PID=$pid"
+  echo "THEME=$THEME_NAME"
+  echo "AT=$(date -Is)"
+} > "$STATE/widget-failed.tmp" && mv -f "$STATE/widget-failed.tmp" "$STATE/widget-failed"
+
+# One notification per session, and forget the sessions that have ended.
+for old in "$STATE"/widget-notified-*; do
+  [[ -e $old ]] || continue
+  [[ -d /proc/${old##*-} ]] || rm -f "$old"
+done
+stamp="$STATE/widget-notified-$pid"
+[[ -e $stamp ]] && exit 0
+: > "$stamp"
+
+command -v omarchy-notification-send >/dev/null 2>&1 || exit 0
+omarchy-notification-send -u normal -g 󰕮 \
+  "OS 99's bar widget did not load" \
+  "The theme still works. The minimized-window list and the title-bar right-click menu are missing. Run os99-install --check, or see: journalctl --user -e | grep caariiboouu" \
+  >/dev/null 2>&1 || true

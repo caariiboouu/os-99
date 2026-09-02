@@ -34,6 +34,10 @@ _os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
 # shellcheck source=os99-lib.sh
 source "$_os99_lib" || { echo "os99-install: missing $_os99_lib" >&2; exit 1; }
 
+# Bumped by hand, and checked against manifest.json by --selftest: a version
+# that only one of them knows is a version nobody can trust.
+OS99_VERSION="1.2.0"
+
 CHECK=false
 AUTO=false
 STATUS=false
@@ -48,6 +52,7 @@ case "${1:-}" in
   --status)  STATUS=true ;;
   --auto)    AUTO=true ;;
   --remove)  REMOVE=true ;;
+  --version) echo "$OS99_VERSION"; exit 0 ;;
   # Print the header block, however long it grows, rather than a line range
   # that silently starts spilling code the moment somebody adds a paragraph.
   -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d; s/^# \?//'; exit 0 ;;
@@ -406,6 +411,11 @@ else
     else
       install -d "$plugdir/shell-plugin" "$plugdir/bin"
       install -m644 "$REPO/manifest.json" "$plugdir/manifest.json"
+      # Replace the directory rather than copying over it. A plain copy leaves
+      # files that the repository has since deleted, and a stale QML file is
+      # not inert: an entry point renamed away is still a local type, and a
+      # local type shadows things.
+      rm -rf "$plugdir/shell-plugin/os99"
       cp -r "$REPO/shell-plugin/os99" "$plugdir/shell-plugin/"
       # The widget's helpers go WITH it. The QML resolves them relative to its
       # own file rather than looking them up on $PATH, so the copy that answers
@@ -417,7 +427,8 @@ else
       # os99-install itself goes too: the widget offers to finish the setup,
       # and it can only do that if the thing that finishes it is beside it.
       for h in os99-lib.sh os99-run os99-minimize os99-buttons os99-menubar-font \
-               os99-theme-reload os99-install os99-window-bars os99-hyprbars-rebuild; do
+               os99-theme-reload os99-install os99-window-bars os99-hyprbars-rebuild \
+               os99-widget-check; do
         install -m755 "$REPO/bin/$h" "$plugdir/bin/$h"
       done
       good "bar widget + helpers -> ~/.config/omarchy/plugins/$PLUGIN_ID"
@@ -617,6 +628,14 @@ register_bar_widget() {
 }
 
 register_bar_widget "$PLUGIN_ID"
+
+# Registered is not the same as loaded, and only the shell can settle it.
+os99_widget_loaded; case $? in
+  0) good "$PLUGIN_ID: QML is loaded in the running shell" ;;
+  2) note "$PLUGIN_ID: no shell running, so nothing to load into" ;;
+  *) bad "$PLUGIN_ID: registered but its QML did not load"
+     say "      journalctl --user -e | grep caariiboouu   shows why" ;;
+esac
 
 # ------------------------------------------------------------------- 6. plugin
 head_ "hyprbars fork"
