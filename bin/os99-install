@@ -880,6 +880,17 @@ head_ "hyprbars fork"
 #      for a distribution that does not package them, and nothing more.
 if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   good "loaded"
+  # Installing a newer plugin does not swap the one already mapped -- Hyprland
+  # does not fully dlclose, so the running one keeps running. Nothing else would
+  # mention that, and the symptom is a fix that appears not to have worked.
+  _live=$(os99_loaded_so || echo)
+  _newest=$(os99_newest_so || echo)
+  if [[ -n $_live && -n $_newest && $_live != "$_newest" && $_newest -nt $_live ]]; then
+    note "a newer build is installed than the one running:"
+    say "      running: $_live"
+    say "      newest:  $_newest"
+    say "      Restart Hyprland to use it."
+  fi
 elif $AUTO && [[ -f /usr/lib/libhyprbars-os99.so || -r $HOME/.local/lib/libhyprbars-os99.path ]] \
      && [[ -n $(os99_sibling os99-window-bars) ]] \
      && "$(os99_sibling os99-window-bars)" >/dev/null 2>&1 \

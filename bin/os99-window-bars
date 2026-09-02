@@ -17,29 +17,9 @@ _os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
 source "$_os99_lib" || { echo "os99-window-bars: missing $_os99_lib" >&2; exit 1; }
 
 PTR="$HOME/.local/lib/libhyprbars-os99.path"
-# WHERE THE .so COMES FROM, in the order it is preferred.
-#
-#   1. ~/.local/lib, named by the pointer file. A hand build: content-hashed,
-#      because Hyprland does not fully dlclose a plugin and dlopen on a
-#      previously-seen PATH hands back the stale handle. That is a development
-#      loop, and the hashed names exist for it.
-#   2. /usr/lib/libhyprbars-os99.so -- the package. One fixed path, which is
-#      fine because a package is replaced by a session, not by a reload.
-#   3. /usr/lib/libhyprbars-os99*.so -- whatever a distro chose to call it.
-#
-# The NEWEST wins, not a fixed order. Preferring ~/.local/lib outright is right
-# for somebody who has just rebuilt by hand and wrong for somebody who ran
-# --auto once and installed the package afterwards -- their package would be
-# silently ignored. "Whichever was put there last" is the same answer in the
-# first case and the right one in the second, with no special case for either.
-SO=""
-for _c in "$(cat "$PTR" 2>/dev/null)" \
-          "$HOME/.local/lib/libhyprbars-os99.so" \
-          /usr/lib/libhyprbars-os99.so /usr/lib64/libhyprbars-os99.so; do
-  [[ -n $_c && -f $_c ]] || continue
-  [[ -z $SO || $_c -nt $SO ]] && SO="$_c"
-done
-[[ -n $SO ]] || SO="$HOME/.local/lib/libhyprbars-os99.so"
+# Which build to load: os99_newest_so knows, and os99-install asks the same
+# question, so there is one answer rather than two that can drift.
+SO=$(os99_newest_so) || SO="$HOME/.local/lib/libhyprbars-os99.so"
 BUILT="$HOME/.local/lib/libhyprbars-os99.built"
 STATE=$(os99_state_dir)
 

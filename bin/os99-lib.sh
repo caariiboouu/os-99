@@ -132,6 +132,42 @@ os99_sibling() {
   command -v "$1" 2>/dev/null
 }
 
+# ---------------------------------------------------------------- the plugin
+#
+# WHERE THE .so COMES FROM, and which one wins.
+#
+#   ~/.local/lib, named by a pointer file -- a hand build, content-hashed
+#     because Hyprland does not fully dlclose a plugin and dlopen on a
+#     previously-seen PATH hands back the stale handle.
+#   /usr/lib/libhyprbars-os99.so -- the package. One fixed path, which is fine
+#     because a package is replaced by a session, not by a reload.
+#
+# The NEWEST wins rather than a fixed order. Preferring the hand build outright
+# is right for somebody who has just rebuilt and wrong for somebody who ran
+# --auto once and installed the package afterwards, whose package would be
+# silently ignored. "Whichever was put there last" is right in both cases.
+os99_newest_so() {
+  local c newest=""
+  for c in "$(cat "$HOME/.local/lib/libhyprbars-os99.path" 2>/dev/null)" \
+           "$HOME/.local/lib/libhyprbars-os99.so" \
+           /usr/lib/libhyprbars-os99.so /usr/lib64/libhyprbars-os99.so; do
+    [[ -n $c && -f $c ]] || continue
+    [[ -z $newest || $c -nt $newest ]] && newest="$c"
+  done
+  [[ -n $newest ]] || return 1
+  printf '%s\n' "$newest"
+}
+
+# The .so Hyprland actually has mapped, if any. Read from the compositor rather
+# than assumed, because the two can differ: installing a newer plugin does not
+# swap the one already loaded, and nothing else would say so.
+os99_loaded_so() {
+  local pid
+  pid=$(pgrep -x Hyprland 2>/dev/null | head -1)
+  [[ -n $pid && -r /proc/$pid/maps ]] || return 1
+  grep -o "/[^ ]*libhyprbars[^ ]*" "/proc/$pid/maps" 2>/dev/null | sort -u | head -1
+}
+
 # ----------------------------------------------------------------------- art
 #
 # Copy freshly drawn art into the LIVE theme.
