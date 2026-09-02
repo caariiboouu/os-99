@@ -568,8 +568,6 @@ if python3 -c 'import tomllib, zlib, struct, fractions' 2>/dev/null; then
 else
   bad "python3 >= 3.11 required (tomllib)"
 fi
-[[ -f $TOML ]] && good "config $TOML" || bad "config missing: $TOML"
-[[ -f $GEN  ]] && good "generator present" || bad "generator missing: $GEN"
 
 # ------------------------------------------------------------------ 1b. files
 # Copy the pieces into place, when run from a repository checkout. Everything
@@ -673,6 +671,14 @@ else
     break
   done
 fi
+
+# The two files everything downstream needs, checked HERE rather than in
+# Prerequisites -- the step above is what installs them, so asking first meant a
+# fresh machine always reported two failures it was about to fix, and a
+# perfectly good --auto ended with "3 missing".
+head_ "Config and generator"
+[[ -f $TOML ]] && good "config $TOML" || bad "config missing: $TOML"
+[[ -f $GEN  ]] && good "generator present" || bad "generator missing: $GEN"
 
 # -------------------------------------------------------------------- 2. scale
 head_ "Display scale"
@@ -886,9 +892,19 @@ elif $AUTO && pkg-config --exists hyprland 2>/dev/null \
   bp_log="$(mktemp)"
   say "building the frame plugin against your installed Hyprland headers."
   say "About ninety seconds."
-  if "$(os99_sibling os99-hyprbars-rebuild)" >"$bp_log" 2>&1 \
-     && hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
-    good "built and loaded"
+  if "$(os99_sibling os99-hyprbars-rebuild)" >"$bp_log" 2>&1; then
+    # Building installs the .so; it does not load it. That is os99-window-bars'
+    # job, and asking `hyprctl plugin list` before running it reported a
+    # successful build as a failure.
+    [[ -n $(os99_sibling os99-window-bars) ]] && \
+      "$(os99_sibling os99-window-bars)" >>"$bp_log" 2>&1 || true
+    sleep 1
+    if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
+      good "built and loaded"
+    else
+      bad "built, but it did not load:"
+      tail -4 "$bp_log" | sed 's/^/      /'
+    fi
   else
     bad "the build failed:"
     tail -4 "$bp_log" | sed 's/^/      /'

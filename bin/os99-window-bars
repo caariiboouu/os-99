@@ -27,12 +27,17 @@ PTR="$HOME/.local/lib/libhyprbars-os99.path"
 #      fine because a package is replaced by a session, not by a reload.
 #   3. /usr/lib/libhyprbars-os99*.so -- whatever a distro chose to call it.
 #
-# A local build wins on purpose: somebody who has just rebuilt by hand means it.
+# The NEWEST wins, not a fixed order. Preferring ~/.local/lib outright is right
+# for somebody who has just rebuilt by hand and wrong for somebody who ran
+# --auto once and installed the package afterwards -- their package would be
+# silently ignored. "Whichever was put there last" is the same answer in the
+# first case and the right one in the second, with no special case for either.
 SO=""
 for _c in "$(cat "$PTR" 2>/dev/null)" \
           "$HOME/.local/lib/libhyprbars-os99.so" \
           /usr/lib/libhyprbars-os99.so /usr/lib64/libhyprbars-os99.so; do
-  [[ -n $_c && -f $_c ]] && { SO="$_c"; break; }
+  [[ -n $_c && -f $_c ]] || continue
+  [[ -z $SO || $_c -nt $SO ]] && SO="$_c"
 done
 [[ -n $SO ]] || SO="$HOME/.local/lib/libhyprbars-os99.so"
 BUILT="$HOME/.local/lib/libhyprbars-os99.built"
