@@ -13,7 +13,7 @@ import qs.Ui
 // os99-minimized workspace (see bin/os99-minimize). A parked window has no bar
 // on screen to click, so something that can see windows the user cannot has to
 // offer the way back. That is this: a count in the bar, and a list you pick
-// from. It is a convenience, not the mechanism. Everything here shells out to
+// from. It is a convenience, not the mechanism. Everything here goes through
 // os99-minimize, which works on its own from a terminal, and the park is a
 // REGULAR workspace -- so if this widget never loads, the windows are still
 // listed by `hyprctl clients` and still reachable by switching to that
@@ -27,9 +27,26 @@ import qs.Ui
 // reads the face the font chain actually RESOLVED rather than naming one here:
 // generate-art.py records that in bar.env after checking what is installed
 // (ChicagoFLF -> Charcoal -> Chicago Kare -> sans-serif), so the menu bar
-// cannot end up on a different face from the title bars. The probe runs once
-// at construction; hooks/theme-set.d/os99-gtk.sh restarts the shell whenever a
-// theme switch crosses the OS 99 boundary.
+// cannot end up on a different face from the title bars.
+//
+// HOW THIS TALKS TO THE HELPERS, and why it looks like this.
+//
+// Nothing here composes a shell command, and nothing here trusts $PATH. Every
+// helper is named by an absolute path derived from THIS FILE's own location,
+// so the widget uses the copy that shipped in the same install as itself --
+// there is no separate step that has to have put something in ~/.local/bin
+// first, and no way for a different os99-minimize earlier in someone's PATH to
+// be the one that runs. When a helper genuinely is not there, the widget says
+// so in the bar rather than failing silently (see helperError).
+//
+// Every helper runs under bin/os99-run, which owns its lifetime: a wall-clock
+// deadline, separate caps on stdout and stderr enforced as the bytes arrive,
+// and a TERM/KILL of the whole process GROUP when the deadline passes, so a
+// wedged hyprctl cannot outlive the call. That matters because the data coming
+// back is window titles, which are written by whatever clients happen to be
+// running. Titles are bounded again on the way in here, and are rendered as
+// plain text -- never as rich text, whose auto-detection would happily read
+// markup out of a window title and go fetch what it names.
 BarWidget {
   id: root
   moduleName: "io.github.caariiboouu.os-99"
@@ -37,19 +54,64 @@ BarWidget {
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
+  // ---------------------------------------------------------------- helpers
+
+  // This file is <plugin>/shell-plugin/os99/BarWidget.qml, so two levels up is
+  // the plugin root, and the helpers sit in its bin/. `omarchy plugin add`
+  // clones the whole repository into the plugins directory, so they arrive
+  // with this file and stay with it.
+  readonly property string pluginRoot: {
+    var u = String(Qt.resolvedUrl("../../"))
+    if (u.indexOf("file://") === 0)
+      u = u.substring(7)
+    return decodeURIComponent(u)
+  }
+  readonly property string runner: pluginRoot + "bin/os99-run"
+  readonly property string minimizer: pluginRoot + "bin/os99-minimize"
+  readonly property string fontProbe: pluginRoot + "bin/os99-menubar-font"
+
+  // Seconds a helper may take, and bytes it may say. A list of parked windows
+  // is a few hundred bytes; anything approaching these numbers is a fault, not
+  // a big desktop.
+  readonly property int deadline: 5
+  // Restoring is more work than asking, and restore-all is more again: one
+  // hyprctl dispatch per window. Reading gets the short deadline, acting gets
+  // one sized to the act.
+  readonly property int actDeadline: 20
+  readonly property int maxStdout: 65536
+  readonly property int maxStderr: 4096
+  // Rows a menu can show and a field length it can show them at. Bounded in
+  // os99-minimize as well; bounded twice because the two bounds protect
+  // different things -- that one keeps the pipe small, this one keeps a single
+  // row from being able to consume the widget.
+  readonly property int maxRows: 100
+  readonly property int maxField: 120
+
+  // The exact argv, never a command line. os99-run refuses anything that is
+  // not one of the helpers sitting beside it, so a mistake here cannot become
+  // a way to run something else.
+  function helperArgv(script, args, maxOut, seconds) {
+    return [root.runner,
+            "--deadline", String(seconds === undefined ? root.deadline : seconds),
+            "--max-stdout", String(maxOut),
+            "--max-stderr", String(root.maxStderr),
+            "--", script].concat(args)
+  }
+
   // Rows of { address, appClass, title }, most recently minimized first.
   property var entries: []
   readonly property int count: entries.length
   property bool popupOpen: false
 
-  // ~/.local/bin is where os99-install puts the scripts, and the shell is not
-  // started from a login shell, so PATH cannot be assumed to include it.
-  readonly property string cli: "PATH=\"$HOME/.local/bin:$PATH\"; os99-minimize"
+  // Empty while the helpers are answering normally. Anything else is shown in
+  // the bar: a widget that quietly does nothing is the failure that costs
+  // someone a window they cannot find.
+  property string helperError: ""
 
-  // Nothing minimized, nothing to say. The bar stays quiet until it has news.
-  // The font probe still runs: a Process does not care that its widget is
-  // collapsed to zero width.
-  visible: count > 0 && !vertical
+  // The bar stays quiet until it has news -- something minimized, or something
+  // wrong. The font probe still runs: a Process does not care that its widget
+  // is collapsed to zero width.
+  visible: (count > 0 || helperError !== "") && !vertical
   implicitWidth: visible ? row.implicitWidth + Style.spacing.controlPaddingX * 2 : 0
   implicitHeight: barSize
 
@@ -57,62 +119,207 @@ BarWidget {
     NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
   }
 
+  // ------------------------------------------------------------ the font probe
+
   Process {
+    id: fontProber
     running: true
-    command: ["sh", "-c", "d=\"$HOME/.local/state/omarchy/current/theme\"; test -f \"$d/os99.marker\" || { echo monospace; exit 0; }; f=$(sed -n 's/^OS99_TEXT_FONT=\"\\(.*\\)\"$/\\1/p' \"$d/decor/bar.env\" 2>/dev/null | tail -1); echo \"${f:-ChicagoFLF}\""]
+    command: root.helperArgv(root.fontProbe, [], 256)
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        Style.fontFamily = String(text).trim() || "monospace"
+        // The helper already holds this to a plain font name; hold it again on
+        // the way in, because it is about to become a font family in a shell
+        // process that outlives every part of this.
+        var f = String(text).trim().substring(0, 64)
+        Style.fontFamily = /^[A-Za-z0-9][A-Za-z0-9 ._-]*$/.test(f) ? f : "monospace"
       }
     }
   }
 
+  // --------------------------------------------------------------- the list
+
+  // Rows arrive one line at a time and are counted as they arrive, so a helper
+  // that somehow produced a million of them is stopped rather than collected.
+  property var pending: []
+  property int rowsSeen: 0
+  property string listerStderr: ""
+
+  function clean(s) {
+    // Control characters out (a title carrying a newline or a tab could
+    // otherwise forge a row), then cut to a length a menu can show.
+    return String(s).replace(/[\x00-\x1f\x7f]/g, " ").substring(0, root.maxField)
+  }
+
+  function takeRow(line) {
+    if (line.length === 0)
+      return
+    root.rowsSeen++
+    if (root.rowsSeen > root.maxRows) {
+      // Seen enough. Stop the helper rather than keep reading it.
+      root.abort(lister)
+      return
+    }
+    var f = line.split("\t")
+    // N, address, class, title -- anything shorter is not a row we wrote.
+    if (f.length < 4)
+      return
+    if (!/^0x[0-9a-fA-F]+$/.test(f[1]))
+      return
+    root.pending.push({ address: f[1], appClass: root.clean(f[2]), title: root.clean(f[3]) })
+  }
+
   function refresh() {
+    // One at a time. Hyprland emits several events for one minimize, and a
+    // widget that started a helper per event would be racing itself.
+    if (lister.running)
+      return
+    root.pending = []
+    root.rowsSeen = 0
+    root.listerStderr = ""
+    root.listerStarted = false
+    // Armed BEFORE the start, not from onStarted: a helper that is not there
+    // to run never emits started, and a watchdog waiting for that signal would
+    // wait forever -- which is exactly the silent nothing this is here to
+    // prevent.
+    listerWatchdog.restart()
     lister.running = true
   }
 
-  function parseList(text) {
-    var out = []
-    var lines = String(text).split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      if (lines[i].length === 0) continue
-      var f = lines[i].split("\t")
-      // N, address, class, title -- anything shorter is not a row we wrote.
-      if (f.length < 4) continue
-      out.push({ address: f[1], appClass: f[2], title: f[3] })
-    }
-    root.entries = out
-    if (out.length === 0) root.popupOpen = false
+  // TERM the helper, then KILL if it is still there. os99-run is a process
+  // group leader, so the signal reaches its whole tree, not just the script.
+  property var aborting: null
+  function abort(p) {
+    if (!p.running)
+      return
+    root.aborting = p
+    p.signal(15)
+    killer.restart()
   }
 
-  function restore(address) {
-    // The address comes from our own list, but it is about to be pasted into a
-    // shell command line, so it gets checked anyway. A title never is: it is
-    // display-only and never reaches a shell.
-    if (!/^0x[0-9a-fA-F]+$/.test(address)) return
-    restorer.command = ["sh", "-c", root.cli + " restore " + address]
-    restorer.running = true
-    root.popupOpen = false
+  Timer {
+    id: killer
+    interval: 2000
+    onTriggered: {
+      if (root.aborting && root.aborting.running)
+        root.aborting.signal(9)
+      root.aborting = null
+    }
   }
+
+  // What a helper's exit code means. os99-minimize exits 1 for "nothing is
+  // minimized", which is news rather than a fault; os99-run exits 125 when the
+  // helper is not there to run and 124 when it ran out of time.
+  function helperFault(code) {
+    if (code === 0 || code === 1)
+      return ""
+    if (code === 125 || code === 126 || code === 127)
+      return "OS 99 helpers not found"
+    if (code === 124)
+      return "OS 99 helper timed out"
+    return "OS 99 helper failed (" + code + ")"
+  }
+
+  // Did this run get as far as a process? Quickshell reports a command it
+  // cannot execute by putting `running` back to false without ever emitting
+  // `started`, and there is no exit code for a program that never ran. That
+  // combination is the missing-helper case, and it is caught here rather than
+  // left to the watchdog, so the bar says so at once instead of after a wait.
+  property bool listerStarted: false
 
   Process {
     id: lister
     running: true
-    command: ["sh", "-c", root.cli + " list"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.parseList(text)
+    command: root.helperArgv(root.minimizer, ["list"], root.maxStdout)
+    onStarted: root.listerStarted = true
+    onRunningChanged: {
+      if (!lister.running && !root.listerStarted) {
+        listerWatchdog.stop()
+        root.helperError = "OS 99 helpers not found"
+      }
+    }
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: line => root.takeRow(line)
+    }
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: line => {
+        if (root.listerStderr.length < 200)
+          root.listerStderr += root.clean(line)
+      }
+    }
+    onExited: (code, status) => {
+      listerWatchdog.stop()
+      root.entries = root.pending
+      root.pending = []
+      if (root.entries.length === 0)
+        root.popupOpen = false
+      root.helperError = root.helperFault(code)
     }
   }
 
+  // The backstop behind os99-run's own deadline: if the runner itself never
+  // returns, this is what ends it.
+  Timer {
+    id: listerWatchdog
+    interval: (root.deadline + 3) * 1000
+    onTriggered: {
+      root.helperError = "OS 99 helper did not answer"
+      root.abort(lister)
+    }
+  }
+
+  property bool actorStarted: false
+
   Process {
-    id: restorer
-    onExited: refreshSoon.restart()
+    id: actor
+    onStarted: root.actorStarted = true
+    onRunningChanged: {
+      if (!actor.running && !root.actorStarted) {
+        actorWatchdog.stop()
+        root.helperError = "OS 99 helpers not found"
+      }
+    }
+    onExited: (code, status) => {
+      actorWatchdog.stop()
+      var fault = root.helperFault(code)
+      if (fault !== "")
+        root.helperError = fault
+      refreshSoon.restart()
+    }
+  }
+
+  Timer {
+    id: actorWatchdog
+    interval: (root.actDeadline + 3) * 1000
+    onTriggered: {
+      root.helperError = "OS 99 helper did not answer"
+      root.abort(actor)
+    }
+  }
+
+  function act(args) {
+    if (actor.running)
+      return
+    actor.command = root.helperArgv(root.minimizer, args, 4096, root.actDeadline)
+    root.actorStarted = false
+    actorWatchdog.restart()
+    actor.running = true
+    root.popupOpen = false
+  }
+
+  function restore(address) {
+    // The address comes from our own list and never reaches a shell -- it is an
+    // argv element -- but it is checked anyway, because it originated with the
+    // compositor rather than with us.
+    if (!/^0x[0-9a-fA-F]+$/.test(address))
+      return
+    root.act(["restore", address])
   }
 
   // Coalesces bursts. Minimising one window emits several Hyprland events, and
-  // each would otherwise start its own hyprctl.
+  // each would otherwise start its own helper.
   Timer {
     id: refreshSoon
     interval: 120
@@ -136,6 +343,8 @@ BarWidget {
     onTriggered: root.refresh()
   }
 
+  // ------------------------------------------------------------------- face
+
   Row {
     id: row
     anchors.centerIn: parent
@@ -146,6 +355,7 @@ BarWidget {
     // colours and needs no icon font.
     Item {
       anchors.verticalCenter: parent.verticalCenter
+      visible: root.helperError === ""
       width: Style.space(14)
       height: Style.space(11)
 
@@ -168,16 +378,17 @@ BarWidget {
 
     Text {
       anchors.verticalCenter: parent.verticalCenter
-      text: root.count
+      text: root.helperError === "" ? root.count : "!"
       color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.body
+      textFormat: Text.PlainText
     }
   }
 
   MouseArea {
     anchors.fill: parent
-    enabled: root.count > 0
+    enabled: root.count > 0 || root.helperError !== ""
     onClicked: {
       root.refresh()
       root.popupOpen = !root.popupOpen
@@ -199,11 +410,29 @@ BarWidget {
       spacing: Style.space(6)
 
       Text {
-        text: "Minimized"
+        text: root.helperError === "" ? "Minimized" : root.helperError
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
         font.bold: true
+        textFormat: Text.PlainText
+        width: column.width
+        elide: Text.ElideRight
+      }
+
+      // What to do about it, named exactly. The CLI keeps working whatever
+      // this widget is doing, so the way out is always available.
+      Text {
+        visible: root.helperError !== ""
+        width: column.width
+        text: "Expected: " + root.pluginRoot + "bin/\n"
+              + "Reinstall the plugin, or run bin/os99-install from a checkout.\n"
+              + "Parked windows are still on the os99-minimized workspace."
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
       }
 
       Repeater {
@@ -227,6 +456,12 @@ BarWidget {
             anchors.verticalCenter: parent.verticalCenter
             anchors.leftMargin: Style.space(4)
             anchors.rightMargin: Style.space(4)
+            // A window title is written by the window, so it is shown as
+            // literal text and nothing else. Text.PlainText is not the default:
+            // without it Qt sniffs the string and may decide a title is rich
+            // text, in which case markup in it is obeyed and any resource it
+            // names is fetched.
+            textFormat: Text.PlainText
             text: rowItem.modelData.title && rowItem.modelData.title.length > 0
                   ? rowItem.modelData.title
                   : (rowItem.modelData.appClass || "window")
@@ -250,6 +485,7 @@ BarWidget {
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
+        textFormat: Text.PlainText
         opacity: allHover.hovered ? 1.0 : 0.7
 
         HoverHandler { id: allHover }
@@ -257,11 +493,7 @@ BarWidget {
         MouseArea {
           anchors.fill: parent
           cursorShape: Qt.PointingHandCursor
-          onClicked: {
-            restorer.command = ["sh", "-c", root.cli + " restore-all"]
-            restorer.running = true
-            root.popupOpen = false
-          }
+          onClicked: root.act(["restore-all"])
         }
       }
     }

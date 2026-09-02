@@ -1,0 +1,37 @@
+#!/bin/bash
+# Print the font family the OS 99 title bars actually resolved to.
+#
+# The menu bar has to match the title bars, and the title bars pick their face
+# at generation time from what is installed (ChicagoFLF -> Charcoal -> Chicago
+# Kare -> sans-serif). generate-art.py records that choice in bar.env, so the
+# answer is read from there rather than named again here, where it could drift.
+#
+# This exists as a script, rather than as a pipeline written inside the QML bar
+# widget, so that the read is bounded and the result is checked before anything
+# uses it: bar.env sits under the user's theme state directory, which is a
+# mutable path, and the value ends up as a font family in a long-lived shell
+# process. The read is capped, and a family that is not a plain font name is
+# refused rather than passed on.
+#
+# Prints "monospace" when the current theme is not an OS 99 one -- the shell's
+# own default, so a non-OS 99 theme is left alone.
+set -uo pipefail
+
+THEME="${OS99_THEME_DIR:-$HOME/.local/state/omarchy/current/theme}"
+FALLBACK=ChicagoFLF
+
+[[ -f $THEME/os99.marker ]] || { echo monospace; exit 0; }
+
+ENVF="$THEME/decor/bar.env"
+[[ -f $ENVF ]] || { echo "$FALLBACK"; exit 0; }
+
+# head -c bounds the read whatever bar.env turns out to be; the last assignment
+# wins, the way a shell sourcing the file would resolve it.
+family=$(head -c 8192 -- "$ENVF" 2>/dev/null |
+  sed -n 's/^OS99_TEXT_FONT="\(.*\)"$/\1/p' | tail -1)
+
+# A font family, and nothing else: no newlines, no control characters, no
+# markup, and short enough to be a name rather than a payload.
+[[ $family =~ ^[A-Za-z0-9][A-Za-z0-9\ ._-]{0,63}$ ]] || family=$FALLBACK
+
+printf '%s\n' "$family"

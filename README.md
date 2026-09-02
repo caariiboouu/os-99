@@ -69,6 +69,15 @@ The first line installs the bar widget the collapse box needs and leaves a
 checkout of this repository in place; the second does the per-machine work.
 A plain `git clone` works too — run `./bin/os99-install` from the checkout.
 
+`omarchy plugin add` clones the whole repository into the plugins directory, so
+the widget's helpers (`bin/os99-run`, `os99-minimize`, `os99-buttons`,
+`os99-menubar-font`) arrive with the widget and stay with it. The QML finds them
+by walking up from its own file rather than by looking on `$PATH`, so the copy
+that answers the bar is always the copy that shipped with the bar. When they are
+genuinely missing, the widget says so in the status bar and names the directory
+it looked in — it does not go quiet and leave you wondering where a minimized
+window went.
+
 `os99-install` is safe to re-run, and re-running it is the fix for most things.
 It checks prerequisites, matches the art to your display, resolves the font,
 installs the hooks, and registers the menu-bar font widget. `--check` reports
@@ -194,6 +203,51 @@ is the `shade` box (or `hl.plugin.hyprbars.shade()` on a key). It is off by
 default: rolling a window up means floating it, and Hyprland re-centres a
 floated window. The plugin bounds the correction it applies when that happens,
 so the bar can sit a little high in the worst case, but never off screen.
+
+## What the shell widget runs, and what bounds it
+
+The bar widget and the right-click menu are QML, and everything they know comes
+from a helper they start. That is a boundary worth being explicit about, because
+the data crossing it is window titles — written by whatever clients happen to be
+running, at whatever length those clients feel like.
+
+Nothing in the QML composes a shell command. Helpers are named by an absolute
+path derived from the QML file's own location and started as an argv list, so
+there is no command line for a title or an address to be quoted into, and no
+`$PATH` for a different `os99-minimize` to be found on.
+
+Every helper runs under [`bin/os99-run`](bin/os99-run), which owns its lifetime:
+
+- It makes itself a **process group leader** before forking, so one signal
+  reaches the helper, its `python3`, its `hyprctl`, and anything else the tree
+  grew. A QML `Process` cannot do this — its child lands in the shell's own
+  group, where killing the group would be killing the shell.
+- It holds a **wall-clock deadline** and, when that runs out, takes the group
+  down with TERM, then KILL, then reaps it. A compositor that is busy or wedged
+  cannot leave a helper behind to wake up later.
+- It **caps stdout and stderr concurrently** — separate budgets, enforced as the
+  bytes arrive rather than after — and keeps draining past the cap, so a capped
+  child never deadlocks on a full pipe.
+- It **refuses to run anything that is not one of the helpers beside it**,
+  resolved through symlinks. A mistake in the QML cannot become a way to run an
+  arbitrary program.
+
+Rows are bounded twice, because the two bounds protect different things:
+`os99-minimize` strips control characters and cuts each field and the row count
+before they reach the pipe, and the widget cuts them again before they reach a
+model. Titles are rendered as `Text.PlainText`, which is not the default: without
+it Qt sniffs the string and may decide a window title is rich text, in which case
+markup in it is obeyed and any resource it names is fetched.
+
+The two commands that publish configuration — `os99-buttons` writing
+`os99-theme.toml`, and `os99-install` writing `shell.json` — never write in
+place. Each follows a symlink once (people keep these files in a dotfiles
+repository, and renaming over the link would detach it), writes to a private
+randomly named file beside the target, forces it to disk, and renames it over
+the original. A reader sees the whole old file or the whole new one; an
+interrupted run leaves the original exactly as it was. `os99-install`'s
+generator log goes in a private temporary directory rather than at a predictable
+name in `/tmp`.
 
 ## Why the art is generated rather than shipped as final PNGs
 

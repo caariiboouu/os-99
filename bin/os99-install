@@ -108,10 +108,20 @@ else
     if [[ $REPO == "$plugdir" ]]; then
       good "running from the installed plugin -- widget already in place"
     else
-      install -d "$plugdir/shell-plugin"
+      install -d "$plugdir/shell-plugin" "$plugdir/bin"
       install -m644 "$REPO/manifest.json" "$plugdir/manifest.json"
       cp -r "$REPO/shell-plugin/os99" "$plugdir/shell-plugin/"
-      good "bar widget -> ~/.config/omarchy/plugins/$PLUGIN_ID"
+      # The widget's helpers go WITH it. The QML resolves them relative to its
+      # own file rather than looking them up on $PATH, so the copy that answers
+      # the bar is always the copy that shipped with the bar -- there is no
+      # separate step that has to have happened first, and no chance of a
+      # different os99-minimize earlier in someone's PATH being the one that
+      # runs. `omarchy plugin add` clones the whole repository and so brings
+      # these along by itself; this is the other route saying the same thing.
+      for h in os99-run os99-minimize os99-buttons os99-menubar-font os99-theme-reload; do
+        install -m755 "$REPO/bin/$h" "$plugdir/bin/$h"
+      done
+      good "bar widget + helpers -> ~/.config/omarchy/plugins/$PLUGIN_ID"
     fi
     # The two widgets this one replaced. Leaving them would put the same count
     # in the bar twice.
@@ -227,17 +237,28 @@ head_ "Art"
 if $CHECK; then
   say "(--check) skipping regeneration"
 else
-  if python3 "$GEN" > /tmp/os99-gen.$$ 2>&1; then
-    grep -E "^  (scale|font|bar height|ridge|hatch rows|bezel)" /tmp/os99-gen.$$ | sed 's/^  /  /'
-    if grep -q "MISALIGNED\|<-- " /tmp/os99-gen.$$; then
-      note "the generator flagged something above -- read it before shipping"
+  # mktemp, not /tmp/os99-gen.$$: a predictable name in a world-writable
+  # directory can be a symlink somebody else planted, pointing at a file this
+  # would then overwrite as you. The private directory goes at the end whether
+  # the generator succeeded, failed, or was interrupted.
+  GENOUT=$(mktemp -d) || { bad "could not create a temporary directory"; GENOUT=""; }
+  if [[ -n $GENOUT ]]; then
+    trap 'rm -rf -- "$GENOUT"' EXIT
+    log="$GENOUT/generate.log"
+    if python3 "$GEN" > "$log" 2>&1; then
+      grep -E "^  (scale|font|bar height|ridge|hatch rows|bezel)" "$log" | sed 's/^  /  /'
+      if grep -q "MISALIGNED\|<-- " "$log"; then
+        note "the generator flagged something above -- read it before shipping"
+      else
+        good "art regenerated, hatch and buttons aligned"
+      fi
     else
-      good "art regenerated, hatch and buttons aligned"
+      bad "generator failed:"; sed 's/^/      /' "$log"
     fi
-  else
-    bad "generator failed:"; sed 's/^/      /' /tmp/os99-gen.$$
+    rm -rf -- "$GENOUT"
+    trap - EXIT
+    GENOUT=""
   fi
-  rm -f /tmp/os99-gen.$$
 fi
 
 # -------------------------------------------------------------------- 5. hooks
@@ -260,28 +281,98 @@ head_ "Shell plugins"
 # user's file.
 SHELLJSON="$HOME/.config/omarchy/shell.json"
 
+# shell.json is the user's file and it is not reconstructible from anything
+# else -- a previous session emptied it and took seven widgets with it. So every
+# read and every write goes through one program, and that program never writes
+# shell.json in place: it writes a private randomly named file beside it
+# (mkstemp, O_EXCL, mode 0600, so nothing can be pre-planted at a name we are
+# about to use), forces it to disk, and renames it over the original, which is
+# atomic. A reader sees the whole old file or the whole new one, never half of
+# either, and an interrupted run leaves the original exactly as it was.
+#
+#   shelljson has-old            -> 0 if a merged-away j.os99-* widget is listed
+#   shelljson drop-old           remove them
+#   shelljson has <id>           -> 0 if <id> is in the bar layout
+#   shelljson add <id>           put <id> at the front of the right section
+shelljson() {
+  python3 - "$SHELLJSON" "$@" <<'PYEOF'
+import json, os, stat, sys, tempfile
+
+OLD = {"j.os99-font", "j.os99-minimized"}
+
+# Follow a symlink once, then work on what it names: people keep shell.json in a
+# dotfiles repository, and renaming over the link would detach it.
+path = os.path.realpath(sys.argv[1])
+cmd = sys.argv[2]
+
+fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+with os.fdopen(fd, "r", encoding="utf-8") as fh:
+    d = json.load(fh)
+lay = d.get("bar", {}).get("layout", {})
+listed = [w.get("id") for sec in lay.values() for w in sec]
+
+
+def publish():
+    dirname = os.path.dirname(path) or "."
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    tfd, tmp = tempfile.mkstemp(prefix=".os99-shell.", suffix=".json.tmp", dir=dirname)
+    try:
+        os.fchmod(tfd, mode)
+        with os.fdopen(tfd, "w", encoding="utf-8") as fh:
+            # Match the file's own formatting exactly -- one-space indent,
+            # sorted keys, and NO trailing newline -- so this shows up as a
+            # one-line diff rather than a rewrite of the whole file.
+            json.dump(d, fh, indent=1, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    dfd = os.open(dirname, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+
+
+if cmd == "has-old":
+    sys.exit(0 if any(w in OLD for w in listed) else 1)
+
+if cmd == "has":
+    sys.exit(0 if sys.argv[3] in listed else 1)
+
+if cmd == "drop-old":
+    for sec in lay:
+        lay[sec] = [w for w in lay[sec] if w.get("id") not in OLD]
+    publish()
+    sys.exit(0)
+
+if cmd == "add":
+    sec = d.setdefault("bar", {}).setdefault("layout", {}).setdefault("right", [])
+    # Front of the right section. The widget is only visible when something IS
+    # minimized, so the position is mostly cosmetic.
+    sec.insert(0, {"id": sys.argv[3]})
+    publish()
+    sys.exit(0)
+
+sys.exit(2)
+PYEOF
+}
+
+# ALWAYS back up before a write. The layout is not reconstructible.
+backup_shelljson() { cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"; }
+
 # Drop the merged-away widgets from the bar layout before registering the new
 # one, so an upgrade does not leave dead entries the shell warns about.
 if [[ -f $SHELLJSON ]] && ! $CHECK; then
-  if python3 -c "
-import json,sys
-d=json.load(open(sys.argv[1]))
-lay=d.get('bar',{}).get('layout',{})
-old={'j.os99-font','j.os99-minimized'}
-sys.exit(0 if any(w.get('id') in old for sec in lay.values() for w in sec) else 1)
-" "$SHELLJSON" 2>/dev/null; then
-    cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"
-    if python3 - "$SHELLJSON" <<'PYEOF'
-import json, sys
-path = sys.argv[1]
-d = json.load(open(path))
-lay = d.get("bar", {}).get("layout", {})
-old = {"j.os99-font", "j.os99-minimized"}
-for sec in lay:
-    lay[sec] = [w for w in lay[sec] if w.get("id") not in old]
-with open(path, "w") as fh:
-    json.dump(d, fh, indent=1, sort_keys=True)
-PYEOF
+  if shelljson has-old 2>/dev/null; then
+    backup_shelljson
+    if shelljson drop-old
     then note "removed old j.os99-* widgets from shell.json (backup written)"
     else bad "could not remove old j.os99-* entries from shell.json"; fi
   fi
@@ -297,12 +388,7 @@ register_bar_widget() {
     return
   fi
 
-  if python3 -c "
-import json,sys
-d=json.load(open(sys.argv[1]))
-lay=d.get('bar',{}).get('layout',{})
-sys.exit(0 if any(w.get('id')==sys.argv[2] for sec in lay.values() for w in sec) else 1)
-" "$SHELLJSON" "$id" 2>/dev/null; then
+  if shelljson has "$id" 2>/dev/null; then
     good "$id: registered in shell.json bar layout"
     return
   fi
@@ -312,24 +398,8 @@ sys.exit(0 if any(w.get('id')==sys.argv[2] for sec in lay.values() for w in sec)
     return
   fi
 
-  # ALWAYS back up first. A previous session emptied this file and took seven
-  # widgets with it; the layout is not reconstructible from anything else.
-  cp -p "$SHELLJSON" "$SHELLJSON.bak.$(date +%s)"
-  if python3 - "$SHELLJSON" "$id" <<'PYEOF'
-import json, sys
-path, wid = sys.argv[1], sys.argv[2]
-d = json.load(open(path))
-lay = d.setdefault("bar", {}).setdefault("layout", {})
-sec = lay.setdefault("right", [])
-# Front of the right section. The widget is only visible when something IS
-# minimized, so the position is mostly cosmetic.
-sec.insert(0, {"id": wid})
-# Match the file's own formatting exactly -- one-space indent, sorted keys, and
-# NO trailing newline -- so this shows up as a one-line diff rather than a
-# rewrite of the whole file.
-with open(path, "w") as fh:
-    json.dump(d, fh, indent=1, sort_keys=True)
-PYEOF
+  backup_shelljson
+  if shelljson add "$id"
   then good "$id: added to shell.json (backup written)"
   else bad "$id: could not edit shell.json -- add {\"id\": \"$id\"} to bar.layout yourself"; fi
 }

@@ -73,15 +73,38 @@ except Exception: print("")'
 # own recency counter (0 = current), which is the closest thing to "the one you
 # just put away" without keeping state of our own -- and state of our own would
 # go stale every time a window closed while parked.
+#
+# Titles and classes are written by the client, not by us, so they are bounded
+# here rather than wherever they land: control characters out (a title carrying
+# a newline or a tab would otherwise forge a row), each field cut to a length a
+# menu can show, and the whole list cut to a count a menu can hold. A window you
+# cannot see is still listed by `hyprctl clients`, so nothing is lost by
+# refusing to print the ten-thousandth one.
+MAX_ROWS=${OS99_MAX_ROWS:-200}
+MAX_FIELD=${OS99_MAX_FIELD:-120}
+
 minimized() {
-  hyprctl clients -j | WS="$WS" python3 -c '
+  hyprctl clients -j | WS="$WS" MAX_ROWS="$MAX_ROWS" MAX_FIELD="$MAX_FIELD" python3 -c '
 import json, os, sys
 ws = os.environ["WS"]
-out = [c for c in json.load(sys.stdin) if c.get("workspace", {}).get("name") == ws]
+max_rows = max(0, int(os.environ["MAX_ROWS"]))
+max_field = max(1, int(os.environ["MAX_FIELD"]))
+
+def clean(v):
+    v = "".join(" " if ord(ch) < 0x20 or ord(ch) == 0x7f else ch for ch in str(v or ""))
+    return v[:max_field]
+
+try:
+    clients = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+out = [c for c in clients if c.get("workspace", {}).get("name") == ws]
 out.sort(key=lambda c: c.get("focusHistoryID", 1 << 30))
-for c in out:
-    title = (c.get("title") or c.get("class") or "window").replace("\t", " ")
-    print("\t".join([c["address"], c.get("class", ""), title]))'
+for c in out[:max_rows]:
+    addr = str(c.get("address") or "")
+    if not addr.startswith("0x"):
+        continue
+    print("\t".join([clean(addr), clean(c.get("class")), clean(c.get("title") or c.get("class") or "window")]))'
 }
 
 cmd_minimize() {

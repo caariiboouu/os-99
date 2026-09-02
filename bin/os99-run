@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Run one OS 99 helper on behalf of the shell widget, and own its lifetime.
+
+The bar widget and the right-click menu are QML, and QML can start a process
+but cannot bound one. Quickshell's Process gives you a pid, a signal() that
+reaches only that pid, and a collector that buffers whatever the child says
+until it stops saying it. None of that is enough here, because the helpers call
+hyprctl, hyprctl talks to the compositor, and a compositor busy or wedged means
+a helper that never returns and a pipe that never closes. Worse, the data
+travelling back is window titles -- written by whatever client happens to be
+running, of whatever length that client feels like.
+
+So the widget starts this, and this starts the helper:
+
+  * it makes itself a process GROUP LEADER before forking, so the pid the widget
+    holds is a group id: one signal now reaches the helper, its python3, its
+    hyprctl, and anything else the tree grew. A QML Process cannot do this --
+    the child lands in the shell's own group, where killing it would be killing
+    the shell.
+  * it holds a wall-clock deadline and, when that runs out, takes the group down
+    with TERM, then KILL, then reaps it. Nothing is left behind to wake up later.
+  * it caps stdout and stderr CONCURRENTLY -- separate budgets, both enforced
+    while the bytes arrive rather than after -- and keeps draining past the cap
+    so a capped child never deadlocks on a full pipe.
+  * it will only run a helper that sits in its own directory, resolved through
+    symlinks. The widget passes an absolute path; this refuses everything that
+    is not one of ours, so a mistake in the QML cannot turn into a way to run
+    an arbitrary program.
+
+Exit status is the helper's own, or 124 on the deadline (the same code timeout(1)
+uses), or 125 if the request itself was refused.
+
+  os99-run [--deadline SEC] [--max-stdout N] [--max-stderr N] -- CMD [ARG...]
+"""
+
+import errno
+import os
+import selectors
+import signal
+import sys
+import time
+
+DEADLINE = 5.0  # seconds; a helper that has not answered by now is not going to
+MAX_STDOUT = 256 * 1024  # a title list, not a file transfer
+MAX_STDERR = 16 * 1024
+GRACE = 2.0  # between TERM and KILL
+
+EXIT_TIMEOUT = 124
+EXIT_REFUSED = 125
+
+
+def die(msg):
+    sys.stderr.write("os99-run: %s\n" % msg)
+    raise SystemExit(EXIT_REFUSED)
+
+
+def parse_args(argv):
+    opts = {"deadline": DEADLINE, "stdout": MAX_STDOUT, "stderr": MAX_STDERR}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--":
+            i += 1
+            break
+        if a.startswith("--") and i + 1 < len(argv):
+            key = {"--deadline": "deadline", "--max-stdout": "stdout",
+                   "--max-stderr": "stderr"}.get(a)
+            if key is None:
+                die("unknown option %r" % a)
+            try:
+                opts[key] = float(argv[i + 1]) if key == "deadline" else int(argv[i + 1])
+            except ValueError:
+                die("%s needs a number" % a)
+            i += 2
+            continue
+        break
+    cmd = argv[i:]
+    if not cmd:
+        die("nothing to run (usage: os99-run [options] -- CMD [ARG...])")
+    if opts["deadline"] <= 0 or opts["stdout"] < 0 or opts["stderr"] < 0:
+        die("deadline must be positive and caps non-negative")
+    return opts, cmd
+
+
+def vetted(path):
+    """The helper must be one of ours: an absolute path that resolves, through
+    every symlink, to a regular executable file in this script's own directory.
+    Checked on the resolved path so a link planted in bin/ cannot point out of
+    it, and the same resolved path is what gets executed."""
+    if not path.startswith("/"):
+        die("helper path must be absolute, got %r" % path)
+    here = os.path.realpath(os.path.dirname(os.path.abspath(__file__)))
+    real = os.path.realpath(path)
+    if os.path.dirname(real) != here:
+        die("refusing to run %r: not in %s" % (path, here))
+    if not os.path.isfile(real) or not os.access(real, os.X_OK):
+        die("refusing to run %r: not an executable file" % path)
+    return real
+
+
+class Pump:
+    """One stream, one budget. Reads keep happening after the budget is spent --
+    a child blocked writing into a pipe nobody drains is a hang, not a saving --
+    the bytes past it are simply dropped."""
+
+    def __init__(self, fd, sink, budget):
+        self.fd = fd
+        self.sink = sink
+        self.left = budget
+        self.truncated = False
+
+    def pump(self):
+        """Returns False at end of stream."""
+        try:
+            chunk = os.read(self.fd, 65536)
+        except OSError as e:
+            if e.errno in (errno.EAGAIN, errno.EINTR):
+                return True
+            return False
+        if not chunk:
+            return False
+        if self.left > 0:
+            take = chunk[: self.left]
+            self.left -= len(take)
+            try:
+                self.sink.write(take)
+                self.sink.flush()
+            except OSError:
+                pass
+        if self.left <= 0 and not self.truncated and len(chunk) > 0:
+            self.truncated = True
+        return True
+
+
+def kill_group(sig):
+    """Signal our whole process group without signalling ourselves out of the
+    teardown we are in the middle of."""
+    prev = signal.signal(sig, signal.SIG_IGN) if sig in (signal.SIGTERM, signal.SIGINT) else None
+    try:
+        os.killpg(0, sig)
+    except OSError:
+        pass
+    if prev is not None:
+        signal.signal(sig, prev)
+
+
+def main():
+    opts, cmd = parse_args(sys.argv[1:])
+    cmd = [vetted(cmd[0])] + cmd[1:]
+
+    # Become the group leader BEFORE the fork, so the child and everything it
+    # starts share our group. setpgid(0, 0) keeps our pid and our session, so
+    # the pid the widget already holds is the group it needs to signal, and
+    # running this from a terminal still behaves like a normal command.
+    try:
+        os.setpgrp()
+    except OSError:
+        pass  # already a leader, or not permitted; the deadline still applies
+
+    out_r, out_w = os.pipe()
+    err_r, err_w = os.pipe()
+
+    pid = os.fork()
+    if pid == 0:  # child
+        try:
+            os.dup2(out_w, 1)
+            os.dup2(err_w, 2)
+            for fd in (out_r, out_w, err_r, err_w):
+                os.close(fd)
+            os.execv(cmd[0], cmd)
+        except BaseException:
+            os._exit(126)
+
+    os.close(out_w)
+    os.close(err_w)
+    for fd in (out_r, err_r):
+        os.set_blocking(fd, False)
+
+    sel = selectors.DefaultSelector()
+    pumps = {out_r: Pump(out_r, sys.stdout.buffer, opts["stdout"]),
+             err_r: Pump(err_r, sys.stderr.buffer, opts["stderr"])}
+    for fd in pumps:
+        sel.register(fd, selectors.EVENT_READ)
+
+    # A signal from the widget means the same thing the deadline does: stop.
+    stop = {"now": False}
+
+    def on_signal(signum, frame):
+        stop["now"] = True
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, on_signal)
+
+    end = time.monotonic() + opts["deadline"]
+    timed_out = False
+    open_fds = set(pumps)
+
+    while open_fds:
+        remaining = end - time.monotonic()
+        if stop["now"] or remaining <= 0:
+            timed_out = not stop["now"]
+            break
+        for key, _ in sel.select(timeout=min(remaining, 0.25)):
+            if not pumps[key.fd].pump():
+                sel.unregister(key.fd)
+                open_fds.discard(key.fd)
+        if not open_fds:
+            break
+
+    def reap_within(seconds):
+        """waitpid, but bounded. Returns the raw status, or None if the child is
+        still there when the time is up."""
+        stop_at = time.monotonic() + seconds
+        while True:
+            try:
+                done, st = os.waitpid(pid, os.WNOHANG)
+            except ChildProcessError:
+                return 0
+            if done:
+                return st
+            if time.monotonic() >= stop_at:
+                return None
+            time.sleep(0.02)
+
+    # A helper can close its pipes and then sit there, so the deadline covers
+    # the wait as well as the read.
+    status = None
+    if not (open_fds or timed_out or stop["now"]):
+        status = reap_within(max(0.0, end - time.monotonic()))
+        if status is None:
+            timed_out = True
+
+    if status is None:
+        # Still holding on, whether by deadline or by signal. Take the group:
+        # the child is only the visible part of it.
+        kill_group(signal.SIGTERM)
+        status = reap_within(GRACE)
+        if status is None:
+            kill_group(signal.SIGKILL)
+            status = reap_within(GRACE)
+        if status is None:
+            status = 0
+
+    for fd in set(pumps):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    if timed_out:
+        sys.stderr.write("os99-run: %s timed out after %gs\n"
+                         % (os.path.basename(cmd[0]), opts["deadline"]))
+        return EXIT_TIMEOUT
+    if os.WIFSIGNALED(status):
+        return 128 + os.WTERMSIG(status)
+    return os.WEXITSTATUS(status)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

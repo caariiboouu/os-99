@@ -14,6 +14,12 @@ import qs.Ui
 // so the menu is only a face on the CLI, and the CLI keeps working if the
 // menu never loads.
 //
+// Like the bar widget, this names its helpers by an absolute path derived from
+// this file's own location and runs them under bin/os99-run, which caps their
+// output, holds them to a deadline, and takes down the whole process group if
+// they overrun. Nothing here builds a shell command line, so there is no
+// composition to get wrong, and everything shown is rendered as plain text.
+//
 // Styled as an OS 9 menu: popup face, 1px rule, a hard offset shadow with no
 // blur (blur is the tell that something is not classic Mac), square corners,
 // the chrome font, and a checkmark column. Colours come from the theme's
@@ -26,6 +32,7 @@ Item {
   property real menuX: 0
   property real menuY: 0
   property string windowAddr: ""
+  property string failure: ""
 
   readonly property int itemH: Style.space(26)
   readonly property int checkW: Style.space(20)
@@ -33,22 +40,65 @@ Item {
   readonly property int menuW: Style.space(170)
   readonly property int shadowOff: Style.space(4)
 
+  // This file is <plugin>/shell-plugin/os99/Menu.qml; the helpers ship in the
+  // same install, two levels up in bin/.
+  readonly property string pluginRoot: {
+    var u = String(Qt.resolvedUrl("../../"))
+    if (u.indexOf("file://") === 0)
+      u = u.substring(7)
+    return decodeURIComponent(u)
+  }
+  readonly property string runner: pluginRoot + "bin/os99-run"
+  readonly property string buttonsCli: pluginRoot + "bin/os99-buttons"
+
+  readonly property int deadline: 5
+  // Toggling a box is not just an edit: it redraws every piece of art and
+  // re-applies the plugin settings, so it gets a deadline that fits the work
+  // rather than the one that fits a question. Killed halfway through a redraw
+  // is the one outcome worth avoiding here.
+  readonly property int toggleDeadline: 30
+  // Eight boxes and their labels. A few hundred bytes; this is generous.
+  readonly property int maxStdout: 16384
+  readonly property int maxStderr: 4096
+  readonly property int maxEntries: 32
+  readonly property int maxLabel: 40
+
+  function helperArgv(args, maxOut, seconds) {
+    return [root.runner,
+            "--deadline", String(seconds === undefined ? root.deadline : seconds),
+            "--max-stdout", String(maxOut),
+            "--max-stderr", String(root.maxStderr),
+            "--", root.buttonsCli].concat(args)
+  }
+
   function openAt(payloadJson) {
     var p
     try { p = JSON.parse(payloadJson || "{}") } catch (e) { p = {} }
-    root.windowAddr = String(p.window || "")
+    root.windowAddr = String(p.window || "").substring(0, 32)
     root.menuX = Number(p.x) || 0
     root.menuY = Number(p.y) || 0
+    if (lister.running)
+      return
+    root.failure = ""
+    root.listerStarted = false
+    // Armed before the start: a helper that is not there never emits started,
+    // and a watchdog hung on that signal would never fire.
+    listerWatchdog.restart()
     lister.running = true
   }
 
   function close() { root.opened = false }
 
   function toggle(id) {
-    // The address is our own list's id, but it reaches a shell command line,
-    // so hold it to the names the art actually has.
-    if (!/^[a-z]+$/.test(id)) return
-    toggler.command = ["sh", "-c", "PATH=\"$HOME/.local/bin:$PATH\"; os99-buttons toggle " + id]
+    // The id is our own list's, and it travels as an argv element rather than
+    // as text in a command line, but it is still held to the names the art
+    // actually has -- a list is only as trustworthy as the thing that made it.
+    if (!/^[a-z]+$/.test(id))
+      return
+    if (toggler.running)
+      return
+    toggler.command = root.helperArgv(["toggle", id], 4096, root.toggleDeadline)
+    togglerWatchdog.restart()
     toggler.running = true
     root.opened = false
   }
@@ -65,23 +115,104 @@ Item {
     return ss.length > 0 ? ss[0] : null
   }
 
+  function clean(s) {
+    return String(s).replace(/[\x00-\x1f\x7f]/g, " ").substring(0, root.maxLabel)
+  }
+
+  // TERM, then KILL. os99-run leads its own process group, so one signal
+  // reaches everything it started.
+  property var aborting: null
+  function abort(p) {
+    if (!p.running)
+      return
+    root.aborting = p
+    p.signal(15)
+    killer.restart()
+  }
+
+  Timer {
+    id: killer
+    interval: 2000
+    onTriggered: {
+      if (root.aborting && root.aborting.running)
+        root.aborting.signal(9)
+      root.aborting = null
+    }
+  }
+
+  // See BarWidget.qml: a command that cannot be executed never emits started,
+  // and never gets an exit code either. Catch it on the way back to idle.
+  property bool listerStarted: false
+
   Process {
     id: lister
-    command: ["sh", "-c", "PATH=\"$HOME/.local/bin:$PATH\"; os99-buttons list --json"]
+    command: root.helperArgv(["list", "--json"], root.maxStdout)
+    onStarted: root.listerStarted = true
+    onRunningChanged: {
+      if (!lister.running && !root.listerStarted) {
+        listerWatchdog.stop()
+        root.entries = []
+        root.failure = "OS 99 helpers not found in " + root.pluginRoot + "bin/"
+        root.opened = true
+      }
+    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
+        var rows = []
         try {
-          root.entries = JSON.parse(String(text)).buttons || []
-          root.opened = root.entries.length > 0
+          rows = JSON.parse(String(text).substring(0, root.maxStdout)).buttons || []
         } catch (e) {
-          root.entries = []
+          rows = []
         }
+        var out = []
+        for (var i = 0; i < rows.length && out.length < root.maxEntries; i++) {
+          var r = rows[i]
+          if (!r || !/^[a-z]+$/.test(String(r.id)))
+            continue
+          out.push({ id: String(r.id), label: root.clean(r.label), on: r.on === true })
+        }
+        root.entries = out
+      }
+    }
+    onExited: (code, status) => {
+      listerWatchdog.stop()
+      if (root.entries.length > 0) {
+        root.failure = ""
+        root.opened = true
+      } else {
+        // Nothing to show is never nothing to say: the menu is the only visible
+        // sign that the boxes are configurable at all.
+        root.failure = code === 125 || code === 126 || code === 127
+                       ? "OS 99 helpers not found in " + root.pluginRoot + "bin/"
+                       : (code === 124 ? "os99-buttons timed out"
+                                       : "os99-buttons failed (" + code + ")")
+        root.opened = true
       }
     }
   }
 
-  Process { id: toggler }
+  Timer {
+    id: listerWatchdog
+    interval: (root.deadline + 3) * 1000
+    onTriggered: {
+      root.failure = "os99-buttons did not answer"
+      root.entries = []
+      root.opened = true
+      root.abort(lister)
+    }
+  }
+
+  Process {
+    id: toggler
+    onExited: (code, status) => togglerWatchdog.stop()
+  }
+
+  Timer {
+    id: togglerWatchdog
+    interval: (root.toggleDeadline + 3) * 1000
+    onTriggered: root.abort(toggler)
+  }
 
   IpcHandler {
     target: "os99"
@@ -145,6 +276,20 @@ Item {
           anchors.fill: parent
           anchors.margins: Style.space(4)
 
+          // Says what went wrong and where it was looking, instead of opening
+          // an empty menu that reads as "there is nothing to configure".
+          Text {
+            visible: root.failure !== ""
+            width: column.width
+            padding: Style.space(4)
+            text: root.failure
+            color: Color.popups.text
+            font.family: Style.fontFamily
+            font.pixelSize: Style.font.caption
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+          }
+
           Repeater {
             model: root.entries
 
@@ -170,6 +315,7 @@ Item {
                 color: rowHover.hovered ? Color.popups.background : Color.popups.text
                 font.family: Style.fontFamily
                 font.pixelSize: Style.font.body
+                textFormat: Text.PlainText
               }
 
               Text {
@@ -180,6 +326,7 @@ Item {
                 color: rowHover.hovered ? Color.popups.background : Color.popups.text
                 font.family: Style.fontFamily
                 font.pixelSize: Style.font.body
+                textFormat: Text.PlainText
                 elide: Text.ElideRight
               }
 
