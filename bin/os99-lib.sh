@@ -84,6 +84,24 @@ os99_state_dir() {
 # NOTE for anyone tempted by `omarchy-shell -q`: quiet mode is best-effort and
 # exits 0 even when the shell, the target or the method is missing. It is
 # useless as a probe. This deliberately does not use it.
+# Wait until omarchy-shell will answer at all, or give up.
+#
+# A theme switch keeps the shell busy for a second or two, and anything that
+# talks to it in that window fails with "omarchy-shell is not responding" --
+# `omarchy plugin add` did during the first from-scratch install, and `omarchy
+# plugin remove` did twice from inside os99-install --remove, each time working
+# immediately when run by hand a moment later. The caller looks broken; the
+# shell was just busy.
+os99_shell_ready() {
+  local try
+  command -v omarchy-shell >/dev/null 2>&1 || return 1
+  for try in $(seq 1 "${1:-15}"); do
+    [[ $(timeout 3 omarchy-shell shell ping 2>/dev/null) == ok ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
 os99_widget_loaded() {
   local try
   command -v omarchy-shell >/dev/null 2>&1 || return 2

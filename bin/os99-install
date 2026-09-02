@@ -514,6 +514,9 @@ if $REMOVE; then
   fi
 
   head_ "Plugin"
+  # The theme switch above left the shell busy, and `omarchy plugin remove`
+  # talks to it. Wait for it to answer before asking.
+  os99_shell_ready 20 || note "omarchy-shell is not answering; removing anyway"
   if command -v omarchy >/dev/null 2>&1 && [[ -d $HOME/.config/omarchy/plugins/$PLUGIN_ID ]]; then
     rm_log="$(mktemp)"
     if omarchy plugin remove "$PLUGIN_ID" --yes >"$rm_log" 2>&1; then
