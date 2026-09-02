@@ -91,8 +91,13 @@ BarWidget {
   // hyprctl dispatch per window. Reading gets the short deadline, acting gets
   // one sized to the act.
   readonly property int actDeadline: 20
-  // Setup compiles a Hyprland plugin from source. Minutes, not seconds.
-  readonly property int setupDeadline: 900
+  // Setup compiles a Hyprland plugin -- and on a machine that has never done it,
+  // hyprpm first clones and builds HYPRLAND ITSELF to get headers. That is tens
+  // of minutes on a laptop, not the fifteen this used to allow, and a deadline
+  // that fires mid-build kills a compiler rather than a hung process. An hour
+  // is generous on purpose: the point of the bound is that nothing can wait
+  // forever, not that it should be tight.
+  readonly property int setupDeadline: 3600
   readonly property int maxStdout: 65536
   readonly property int maxStderr: 4096
   // Rows a menu can show and a field length it can show them at. Bounded in
@@ -694,8 +699,10 @@ BarWidget {
                 + "against, so an upgrade stops this one loading and the window "
                 + "frames go with it. Rebuilding takes a few minutes."
               : "Setting up copies the theme in, draws the window art at this "
-                + "display's scale, builds the frame plugin against your Hyprland "
-                + "(a few minutes), and switches to OS 99 Platinum."
+                + "display's scale, builds the frame plugin against your Hyprland, "
+                + "and switches to OS 99 Platinum. The build is the slow part, and "
+                + "the first one on a machine is much the slowest: it compiles "
+                + "Hyprland itself to get headers. Leave it running."
         color: root.foreground
         opacity: 0.7
         font.family: root.fontFamily
