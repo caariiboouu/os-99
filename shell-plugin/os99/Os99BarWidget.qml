@@ -453,8 +453,14 @@ BarWidget {
         }
         root.setupSteps = out
         root.setupReady = s.ready === true
-        root.setupHeadline = root.clean(s.headline || "") || "Finish setting up OS 99"
-        root.setupAction = root.clean(s.action || "") || "Set up OS 99"
+        // An EMPTY action is meaningful, not missing: it means there is
+        // something to say and nothing to offer -- an interrupted removal, for
+        // one, which no bar should have a button for. Only an absent key falls
+        // back.
+        root.setupHeadline = s.headline === undefined
+                             ? "Finish setting up OS 99" : root.clean(s.headline)
+        root.setupAction = s.action === undefined
+                           ? "Set up OS 99" : root.clean(s.action)
         root.setupReason = root.clean(s.reason || "")
         root.publish({ setupSteps: root.setupSteps, setupReady: root.setupReady,
                        setupHeadline: root.setupHeadline, setupAction: root.setupAction,
@@ -681,7 +687,9 @@ BarWidget {
       Text {
         visible: root.helperError === "" && !root.setupReady && !root.setupRunning
         width: column.width
-        text: root.setupReason === "stale"
+        text: root.setupAction === ""
+              ? "Run  os99-install --remove  in a terminal to finish it."
+              : root.setupReason === "stale"
               ? "Hyprland plugins are tied to the Hyprland they were built "
                 + "against, so an upgrade stops this one loading and the window "
                 + "frames go with it. Rebuilding takes a few minutes."
@@ -698,6 +706,7 @@ BarWidget {
 
       Rectangle {
         visible: root.helperError === "" && !root.setupReady && !root.setupRunning
+                 && root.setupAction !== ""
         width: column.width
         height: setupLabel.implicitHeight + Style.space(10)
         radius: 0

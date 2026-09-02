@@ -16,6 +16,11 @@
 #                           two hyprpm commands to you -- unloading a plugin
 #                           from a running compositor is not a thing to do in
 #                           the middle of a script
+#   os99-install --selftest a gate against drift: does every script still
+#                           parse, does the manifest still agree with itself,
+#                           does os99-run still hold a deadline and cap its
+#                           output. Touches nothing outside a temp directory
+#   os99-install --version  the version, for anything that wants to check it
 #
 # The theme is not one artefact. It is art baked at this display's scale, a
 # forked hyprbars plugin, two theme-set hooks, a config file and a shell plugin,
@@ -42,6 +47,7 @@ CHECK=false
 AUTO=false
 STATUS=false
 REMOVE=false
+SELFTEST=false
 # Unknown arguments must not fall through to a real install. They used to: any
 # flag that was not --check simply left CHECK=false, so `os99-install --help`
 # quietly performed a full install -- copying plugins, rewriting hooks, and
@@ -52,13 +58,14 @@ case "${1:-}" in
   --status)  STATUS=true ;;
   --auto)    AUTO=true ;;
   --remove)  REMOVE=true ;;
+  --selftest) SELFTEST=true ;;
   --version) echo "$OS99_VERSION"; exit 0 ;;
   # Print the header block, however long it grows, rather than a line range
   # that silently starts spilling code the moment somebody adds a paragraph.
   -h|--help) sed -n '2,/^[^#]/p' "$0" | sed '$d; s/^# \?//'; exit 0 ;;
   *)
     echo "os99-install: unknown option '$1'" >&2
-    echo "usage: os99-install [--check | --status | --auto | --remove]" >&2
+    echo "usage: os99-install [--check | --status | --auto | --remove | --selftest]" >&2
     exit 2
     ;;
 esac
@@ -212,9 +219,17 @@ if $STATUS; then
   st_theme=false;  [[ $THEME_NAME == os-99-* ]] && st_theme=true
   st_hyprpm=false; command -v hyprpm >/dev/null 2>&1 && st_hyprpm=true
 
+  # A run that started and never finished. Reported only when something is
+  # actually outstanding: if every step passes, whatever was interrupted
+  # evidently got far enough, and saying so would be noise.
+  SESSION=$(os99_session_interrupted || true)
+  SESSION_OP=$(sed -n 's/^OP=//p' <<<"$SESSION" | head -1)
+  SESSION_THEME=$(sed -n 's/^THEME_BEFORE=//p' <<<"$SESSION" | head -1)
+
   DEPS=$st_deps FILES=$st_files ART=$st_art WIDGET=$st_widget PLUGIN=$st_plugin \
   THEME=$st_theme HYPRPM=$st_hyprpm URL="$(repo_url)" \
-  REASON="$PLUGIN_REASON" BUILT_TAG="$BUILT_TAG" RUN_TAG="$RUN_TAG" python3 -c '
+  REASON="$PLUGIN_REASON" BUILT_TAG="$BUILT_TAG" RUN_TAG="$RUN_TAG" \
+  SESSION_OP="$SESSION_OP" SESSION_THEME="$SESSION_THEME" python3 -c '
 import json, os
 
 def flag(name):
@@ -248,9 +263,18 @@ outstanding = [r["id"] for r in rows if not r["done"]]
 # The words the bar should use. A rebuild after a system upgrade is not a
 # "setup", and calling it one would tell somebody who has been running this for
 # months that their install never finished.
+session_op = os.environ.get("SESSION_OP", "")
+session_theme = os.environ.get("SESSION_THEME", "")
+
 upgraded = bool(built_tag and run_tag and built_tag != run_tag)
 if ready:
     headline, action = "", ""
+elif session_op == "remove":
+    # Nothing here should offer to finish a removal. Re-running it is one
+    # command, and a button that uninstalls is not a button to put in a bar.
+    headline, action = "An OS 99 removal did not finish", ""
+elif session_op == "auto":
+    headline, action = "Setup did not finish", "Finish setting up OS 99"
 elif outstanding == ["plugin"] and reason == "stale":
     headline = "Hyprland was updated" if upgraded else "The window frames are not loading"
     action = "Rebuild window frames"
@@ -264,9 +288,155 @@ print(json.dumps({
     "reason": reason,
     "headline": headline,
     "action": action,
+    "interrupted": ({"op": session_op, "themeBefore": session_theme}
+                    if session_op and not ready else None),
     "steps": rows,
 }))
 '
+  exit 0
+fi
+
+# --------------------------------------------------------------- 0a. selftest
+# The checks that were being done by hand, done by a command.
+#
+# This is not a test suite for the theme -- it cannot tell you the pinstripe is
+# a pixel out. It is a gate against DRIFT: the things that quietly stop being
+# true when Omarchy, Quickshell, Hyprland or python move underneath us, and
+# which otherwise get discovered by somebody's bar going missing.
+#
+# It touches nothing outside a temporary directory.
+if $SELFTEST; then
+  REPO_ROOT=$(cd -- "$(dirname -- "$(readlink -f "$0")")/.." && pwd)
+  TMP=$(mktemp -d) || { echo "selftest: no temporary directory" >&2; exit 1; }
+  trap 'rm -rf -- "$TMP"' EXIT
+  passed=0; failed=0
+  t() {  # t <name> <command...>
+    local name=$1; shift
+    if "$@" >"$TMP/out" 2>&1; then
+      printf '  \033[32mpass\033[0m  %s\n' "$name"; passed=$((passed+1))
+    else
+      printf '  \033[31mFAIL\033[0m  %s\n' "$name"; failed=$((failed+1))
+      sed 's/^/          /' "$TMP/out" | head -6
+    fi
+  }
+
+  head_ "Shape"
+  t "required files are present" bash -c '
+    cd "$1" || exit 1
+    for f in manifest.json hyprpm.toml LICENSE README.md os99-theme.toml \
+             bin/os99-lib.sh bin/os99-install bin/os99-run bin/os99-minimize \
+             bin/os99-buttons bin/os99-window-bars \
+             shell-plugin/os99/Os99BarWidget.qml shell-plugin/os99/Menu.qml \
+             plugin/hyprbars/Makefile themes/os-99-platinum/decor/generate-art.py; do
+      [[ -e $f ]] || { echo "missing: $f"; exit 1; }
+    done' _ "$REPO_ROOT"
+  t "no symlinks anywhere in the package" bash -c '
+    link=$(find "$1" -name .git -prune -o -type l -print -quit)
+    [[ -z $link ]] || { echo "symlink: $link"; exit 1; }' _ "$REPO_ROOT"
+
+  head_ "Syntax"
+  # By shebang, not by directory: bin/ holds a python program too, and running
+  # bash -n over it reports a syntax error in perfectly good python.
+  t "every shell script parses" bash -c '
+    fail=0
+    while IFS= read -r -d "" f; do
+      head -1 "$f" | grep -q "^#!.*\(bash\|sh\)$" || continue
+      bash -n "$f" || fail=1
+    done < <(find "$1/bin" "$1/hooks" -type f -print0)
+    exit $fail' _ "$REPO_ROOT"
+  t "every sourced library parses" bash -n "$REPO_ROOT/bin/os99-lib.sh"
+  t "every python program parses" bash -c '
+    python3 -c "import ast,sys; [ast.parse(open(p).read()) for p in sys.argv[1:]]" \
+      "$1/bin/os99-run" "$1/themes/os-99-platinum/decor/generate-art.py"' _ "$REPO_ROOT"
+  # A QML syntax error does not raise anything anyone sees: the widget simply
+  # never appears. qmllint is the only thing that catches it before a user does.
+  if command -v qmllint >/dev/null 2>&1; then
+    t "every QML file parses" qmllint "$REPO_ROOT/shell-plugin/os99/Os99BarWidget.qml" \
+                                      "$REPO_ROOT/shell-plugin/os99/Menu.qml"
+  else
+    note "qmllint not installed -- QML is unchecked"
+  fi
+
+  head_ "Manifest"
+  t "manifest.json parses and matches --version" bash -c '
+    python3 - "$1" "$2" <<PYEOF
+import json, sys
+m = json.load(open(sys.argv[1] + "/manifest.json"))
+if m["version"] != sys.argv[2]:
+    raise SystemExit("manifest %s != --version %s" % (m["version"], sys.argv[2]))
+for key, path in m["entryPoints"].items():
+    import os
+    if not os.path.exists(os.path.join(sys.argv[1], path)):
+        raise SystemExit("entry point missing: %s -> %s" % (key, path))
+PYEOF' _ "$REPO_ROOT" "$OS99_VERSION"
+  t "hyprpm.toml parses and its pin names a commit we have" bash -c '
+    cd "$1" || exit 1
+    python3 - <<PYEOF
+import subprocess, tomllib
+d = tomllib.load(open("hyprpm.toml", "rb"))
+for hypr, mine in d["repository"].get("commit_pins", []):
+    out = subprocess.run(["git", "cat-file", "-t", mine], capture_output=True, text=True)
+    if out.stdout.strip() != "commit":
+        raise SystemExit("pinned commit not in this repository: %s" % mine)
+PYEOF' _ "$REPO_ROOT"
+  if command -v omarchy-plugin-validate >/dev/null 2>&1; then
+    t "omarchy accepts the plugin folder" omarchy-plugin-validate "$REPO_ROOT"
+  else
+    note "omarchy-plugin-validate not installed -- manifest unchecked against the shell"
+  fi
+
+  head_ "Behaviour"
+  t "--status is valid JSON with the keys the widget reads" bash -c '
+    "$1/bin/os99-install" --status | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for k in (\"ready\", \"canFix\", \"steps\", \"headline\", \"action\", \"reason\", \"interrupted\"):
+    if k not in d:
+        raise SystemExit(\"missing key: \" + k)
+if not isinstance(d[\"steps\"], list) or not d[\"steps\"]:
+    raise SystemExit(\"no steps\")
+"' _ "$REPO_ROOT"
+  t "os99-run refuses a program that is not one of ours" bash -c '
+    "$1/bin/os99-run" -- /bin/echo hi >/dev/null 2>&1 && { echo "it ran /bin/echo"; exit 1; }
+    exit 0' _ "$REPO_ROOT"
+  t "os99-run holds a deadline and kills the whole group" bash -c '
+    d=$2/hang; printf "#!/bin/bash\nsleep 60 &\nsleep 60\n" > "$d"; chmod +x "$d"
+    cp "$1/bin/os99-run" "$2/os99-run"
+    "$2/os99-run" --deadline 1 -- "$d" >/dev/null 2>&1
+    [[ $? -eq 124 ]] || { echo "expected exit 124"; exit 1; }
+    sleep 0.3
+    pgrep -f "^sleep 60$" >/dev/null && { echo "a child outlived the deadline"; exit 1; }
+    exit 0' _ "$REPO_ROOT" "$TMP"
+  t "os99-run caps stdout" bash -c '
+    cat > "$2/spew" <<"SPEW"
+#!/bin/bash
+head -c 200000 /dev/zero | tr "\0" "x"
+SPEW
+    chmod +x "$2/spew"
+    cp "$1/bin/os99-run" "$2/os99-run"
+    n=$("$2/os99-run" --max-stdout 4096 -- "$2/spew" | wc -c)
+    [[ $n -eq 4096 ]] || { echo "got $n bytes, wanted 4096"; exit 1; }' _ "$REPO_ROOT" "$TMP"
+
+  head_ "Writing"
+  t "os99_publish replaces atomically and refuses nothing" bash -c '
+    source "$1/bin/os99-lib.sh"
+    printf "before\n" > "$2/f"
+    printf "after\n" | os99_publish "$2/f"
+    [[ $(cat "$2/f") == after ]] || { echo "not replaced"; exit 1; }
+    printf "" | os99_publish "$2/f" 2>/dev/null && { echo "empty input accepted"; exit 1; }
+    [[ $(cat "$2/f") == after ]] || { echo "clobbered by an empty write"; exit 1; }
+    exit 0' _ "$REPO_ROOT" "$TMP"
+  t "os99-buttons round-trips a config byte for byte" bash -c '
+    cp "$1/os99-theme.toml" "$2/cfg.toml"
+    cp "$2/cfg.toml" "$2/cfg.before"
+    PATH=/usr/bin:/bin OS99_CONFIG=$2/cfg.toml "$1/bin/os99-buttons" toggle pin >/dev/null 2>&1
+    PATH=/usr/bin:/bin OS99_CONFIG=$2/cfg.toml "$1/bin/os99-buttons" toggle pin >/dev/null 2>&1
+    cmp -s "$2/cfg.before" "$2/cfg.toml" || { echo "config changed across a round trip"; exit 1; }' \
+    _ "$REPO_ROOT" "$TMP"
+
+  head_ "Summary"
+  printf '  %d passed, %d failed\n' "$passed" "$failed"
+  (( failed == 0 )) || exit 1
   exit 0
 fi
 
@@ -282,6 +452,7 @@ fi
 # The theme config is moved aside rather than deleted. Somebody who spent an
 # evening tuning ridge counts should not lose it to an uninstall.
 if $REMOVE; then
+  os99_session_begin remove
   head_ "Wearing something else"
   THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
   if [[ $THEME_NAME == os-99-* ]] && command -v omarchy >/dev/null 2>&1; then
@@ -339,6 +510,7 @@ if $REMOVE; then
     good "plugin was not installed"
   fi
 
+  os99_session_end
   head_ "Left for you"
   say "The compositor plugin is still loaded. Unloading it restarts the window"
   say "frames, so it is yours to time:"
@@ -347,6 +519,11 @@ if $REMOVE; then
   say "      hyprpm remove $(repo_url)"
   exit 0
 fi
+
+# --auto is the one mode that changes several things in a row, so it is the one
+# that can be caught halfway. Record that it started; clear it only if it got
+# all the way through.
+$AUTO && os99_session_begin auto
 
 # --------------------------------------------------------------------- 1. deps
 head_ "Prerequisites"
@@ -712,6 +889,9 @@ fi
 head_ "Summary"
 printf '  %d ok, %d note, %d missing\n' "$ok" "$warn" "$fail"
 if (( fail == 0 )); then
+  # Nothing outstanding means nothing was left half-done, whatever mode got
+  # us here. --check never writes, so it never clears.
+  $CHECK || os99_session_end
   say "Ready."
 elif $AUTO; then
   say "Some of it needs you: work through the 'miss' lines above."

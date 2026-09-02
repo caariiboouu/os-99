@@ -106,6 +106,13 @@ omarchy theme set "OS 99 Platinum"
 it is what the button runs. A plain `git clone` works too: run
 `./bin/os99-install` from the checkout.
 
+`os99-install --selftest` is the gate against drift: every script still parses,
+every QML file still parses (a QML syntax error raises nothing anyone sees — the
+widget simply never appears), the manifest still agrees with itself and with the
+commit its `hyprpm.toml` pin names, `os99-run` still holds a deadline and kills
+the process group behind it, and a config round-trips byte for byte. It touches
+nothing outside a temporary directory.
+
 `os99-install` is safe to re-run, and re-running it is the fix for most things.
 It checks prerequisites, matches the art to your display, resolves the font,
 installs the hooks, and puts the bar widget in your bar.
@@ -266,6 +273,8 @@ beside the widget. Each one explains itself with `--help`.
 | `os99-window-bars` | load and configure the frame plugin while an OS 99 theme is active, and unload it otherwise. This is what the theme hook runs |
 | `os99-hyprbars-rebuild` | rebuild the fork against the running Hyprland after an upgrade |
 | `os99-run` | the bounded launcher the bar widget starts every helper through |
+| `os99-widget-check` | ask the running shell whether OS 99's QML actually loaded, and say so if it did not |
+| `os99-lib.sh` | sourced, not run: which Hyprland is listening, where state goes, how a config file is published |
 | `os99-menubar-font` | print the font face the title bars resolved to |
 | `os99-bar-menu` | open the right-click menu at the cursor; the plugin spawns this |
 
@@ -298,6 +307,20 @@ again; it redraws to match.
 **The right-click menu does nothing.** It is the Omarchy shell's, and the plugin
 is enabled through its bar-layout entry — so taking the widget off your bar also
 unmounts the menu. `os99-buttons` does the same job from a terminal regardless.
+
+**The widget vanished after an Omarchy update.** The bar widget and the menu run
+inside Omarchy's own shell process, so a change to a type they extend or a
+property they bind can stop the QML loading — and a widget that failed to load
+cannot tell you it failed. A post-boot hook asks the shell instead, and notifies
+once per session if OS 99's QML never answered. `os99-install --check` reports
+the same thing on demand; `journalctl --user -e | grep caariiboouu` says why.
+Parked windows are unaffected: they sit on a regular workspace and
+`os99-minimize restore` still brings them back.
+
+**A setup or removal was interrupted.** Every step is idempotent, so the fix is
+to run it again — the record under `~/.local/state/os99/` exists to tell you
+that something *was* interrupted and what your theme was before it started,
+which is the one thing re-running cannot tell you.
 
 **Corners look rounded, or the frame is clipped.** Nothing to edit: the plugin
 holds rounding at 0 and blur off as a per-window rule on framed windows

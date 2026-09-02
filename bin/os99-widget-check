@@ -29,6 +29,12 @@ STATE=$(os99_state_dir)
 THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
 [[ $THEME_NAME == os-99-* ]] || exit 0
 
+# Forget the sessions that have ended, whichever way this run goes.
+for old in "$STATE"/widget-notified-*; do
+  [[ -e $old ]] || continue
+  [[ -d /proc/${old##*-} ]] || rm -f "$old"
+done
+
 deadline=$((SECONDS + DEADLINE))
 while (( SECONDS < deadline )); do
   os99_widget_loaded
@@ -55,11 +61,6 @@ pid=$(pgrep -x quickshell 2>/dev/null | head -1)
   echo "AT=$(date -Is)"
 } > "$STATE/widget-failed.tmp" && mv -f "$STATE/widget-failed.tmp" "$STATE/widget-failed"
 
-# One notification per session, and forget the sessions that have ended.
-for old in "$STATE"/widget-notified-*; do
-  [[ -e $old ]] || continue
-  [[ -d /proc/${old##*-} ]] || rm -f "$old"
-done
 stamp="$STATE/widget-notified-$pid"
 [[ -e $stamp ]] && exit 0
 : > "$stamp"

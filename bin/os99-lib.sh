@@ -105,6 +105,46 @@ os99_sibling() {
   command -v "$1" 2>/dev/null
 }
 
+# ------------------------------------------------------------------ sessions
+#
+# Setting OS 99 up is not one action. It copies a theme in, draws art at this
+# display's scale, compiles a plugin into the compositor and switches the theme
+# -- and somebody can log out in the middle of that. What makes this survivable
+# is not a transaction log: it is that every one of those steps is idempotent,
+# so recovery is simply running it again.
+#
+# What a record buys, then, is the one thing re-running cannot supply: the
+# knowledge that something WAS interrupted, and what the theme was before it
+# started. Written before the first change, removed only on success.
+os99_session_begin() {
+  local dir; dir=$(os99_state_dir)
+  {
+    echo "OP=$1"
+    echo "PID=$$"
+    echo "STARTED=$(date -Is)"
+    echo "THEME_BEFORE=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo)"
+  } > "$dir/session.tmp" && mv -f "$dir/session.tmp" "$dir/session"
+}
+
+os99_session_end() {
+  rm -f "$(os99_state_dir)/session"
+}
+
+# Print the record if one was left behind, or nothing.
+#
+# A record whose process is still running is not an interruption, it is a run in
+# progress -- checking that is what keeps `os99-install --status`, which the bar
+# widget calls every minute, from announcing a crash every time somebody presses
+# the setup button.
+os99_session_interrupted() {
+  local f pid
+  f="$(os99_state_dir)/session"
+  [[ -f $f ]] || return 1
+  pid=$(sed -n 's/^PID=//p' "$f" | head -1)
+  [[ -n $pid && -d /proc/$pid ]] && return 1
+  cat "$f"
+}
+
 # --------------------------------------------------------------- publishing
 #
 # Replace a file's contents, or leave it exactly as it was. Used for every
