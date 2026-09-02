@@ -85,6 +85,12 @@ genuinely missing, the widget says so in the status bar and names the directory
 it looked in — it does not go quiet and leave you wondering where a minimized
 window went.
 
+`omarchy plugin update` is a fast-forward pull of that checkout, so it only works
+for the route that made one. `os99-install` run from a `git clone` elsewhere
+copies the widget into place instead, which is a normal plugin directory in every
+way except that it has no `.git` — update it by re-running `os99-install` from
+the checkout you pulled.
+
 `os99-install` is safe to re-run, and re-running it is the fix for most things.
 It checks prerequisites, matches the art to your display, resolves the font,
 installs the hooks, and registers the menu-bar font widget. `--check` reports
@@ -245,6 +251,25 @@ before they reach the pipe, and the widget cuts them again before they reach a
 model. Titles are rendered as `Text.PlainText`, which is not the default: without
 it Qt sniffs the string and may decide a window title is rich text, in which case
 markup in it is obeyed and any resource it names is fetched.
+
+One instance of the widget exists per monitor, because a bar surface does. They
+elect one poller — the first in the host's own list of them, so every instance
+names the same one — and it hands the result to the rest; otherwise three
+monitors would mean three `hyprctl` calls a tick for one answer. The election is
+made at each tick rather than once, so a monitor plugged in or pulled out settles
+itself.
+
+The widget works on a vertical bar, stacking the mark over the count. That is
+worth stating because it used to hide itself there, which took the one control
+that brings a parked window back out of exactly the layout where a parked window
+is hardest to find.
+
+Omarchy enables a plugin that is both a bar widget and a panel through its
+bar-layout entry alone, so **taking the widget off the bar also unmounts the
+right-click menu**. The widget costs nothing while it is idle — it collapses to
+zero width until something is minimized or something is wrong — so leaving it in
+place is the cheap way to keep the menu. `os99-buttons` configures the boxes from
+a terminal either way.
 
 The two commands that publish configuration — `os99-buttons` writing
 `os99-theme.toml`, and `os99-install` writing `shell.json` — never write in

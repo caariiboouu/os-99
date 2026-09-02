@@ -14,7 +14,7 @@
   "barWidget": {
     "displayName": "OS 99",
     "description": "Windows parked by the title bar's collapse box, and the OS 99 menu-bar font",
-    "category": "Appearance",
+    "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "right"
   }

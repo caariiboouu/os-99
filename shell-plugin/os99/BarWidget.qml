@@ -110,12 +110,26 @@ BarWidget {
 
   // The bar stays quiet until it has news -- something minimized, or something
   // wrong. The font probe still runs: a Process does not care that its widget
-  // is collapsed to zero width.
-  visible: (count > 0 || helperError !== "") && !vertical
-  implicitWidth: visible ? row.implicitWidth + Style.spacing.controlPaddingX * 2 : 0
-  implicitHeight: barSize
+  // is collapsed to nothing.
+  visible: count > 0 || helperError !== ""
+
+  // A vertical bar stacks the mark over the count and grows downwards; a
+  // horizontal one sets them side by side and grows sideways. This used to
+  // hide itself outright on a vertical bar, which took the one control that
+  // brings a parked window back out of exactly the layout where a parked
+  // window is hardest to find.
+  implicitWidth: vertical
+    ? barSize
+    : (visible ? content.implicitWidth + Style.spacing.controlPaddingX * 2 : 0)
+  implicitHeight: vertical
+    ? (visible ? content.implicitHeight + Style.spacing.controlPaddingY * 2 : 0)
+    : barSize
 
   Behavior on implicitWidth {
+    NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+  }
+
+  Behavior on implicitHeight {
     NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
   }
 
@@ -169,10 +183,47 @@ BarWidget {
     root.pending.push({ address: f[1], appClass: root.clean(f[2]), title: root.clean(f[3]) })
   }
 
+  // A bar surface is built per monitor, so this widget is live once per screen
+  // and every copy would ask the same question and get the same answer. Three
+  // monitors would mean three hyprctl calls a tick for one list. So the
+  // instances elect one poller -- the first in the host's own list of them, so
+  // every instance names the same one -- and it hands the result to the rest.
+  // Elected at each tick rather than once, so a monitor plugged in or pulled
+  // out settles itself with nothing having to notify anything.
+  function instances() {
+    return bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : []
+  }
+
+  function isPoller() {
+    var all = root.instances()
+    // A bar that cannot list its own widgets is a bar we cannot coordinate on.
+    // Then every instance polls, which is what this did before -- wasteful on
+    // several monitors, but never silent, and silent is the worse failure.
+    return all.length === 0 || all[0] === root
+  }
+
+  // Called ON a peer BY the poller. Never starts anything of its own.
+  function adopt(rows, fault) {
+    root.entries = rows
+    root.helperError = fault
+    if (rows.length === 0)
+      root.popupOpen = false
+  }
+
+  function publish() {
+    var all = root.instances()
+    for (var i = 0; i < all.length; i++) {
+      if (all[i] !== root && all[i] && typeof all[i].adopt === "function")
+        all[i].adopt(root.entries, root.helperError)
+    }
+  }
+
   function refresh() {
     // One at a time. Hyprland emits several events for one minimize, and a
     // widget that started a helper per event would be racing itself.
     if (lister.running)
+      return
+    if (!root.isPoller())
       return
     root.pending = []
     root.rowsSeen = 0
@@ -256,6 +307,7 @@ BarWidget {
       if (root.entries.length === 0)
         root.popupOpen = false
       root.helperError = root.helperFault(code)
+      root.publish()
     }
   }
 
@@ -345,16 +397,21 @@ BarWidget {
 
   // ------------------------------------------------------------------- face
 
-  Row {
-    id: row
+  // One Grid rather than a Row and a Column behind a Loader: two cells either
+  // way, so the only thing that changes with the bar's orientation is how many
+  // columns they sit in.
+  Grid {
+    id: content
     anchors.centerIn: parent
+    columns: root.vertical ? 1 : 2
     spacing: Style.space(6)
+    horizontalItemAlignment: Grid.AlignHCenter
+    verticalItemAlignment: Grid.AlignVCenter
 
     // A window rolled down to its title bar: the same idea the collapse box
     // draws, at bar scale. Drawn rather than iconified so it follows the theme
     // colours and needs no icon font.
     Item {
-      anchors.verticalCenter: parent.verticalCenter
       visible: root.helperError === ""
       width: Style.space(14)
       height: Style.space(11)
@@ -377,7 +434,6 @@ BarWidget {
     }
 
     Text {
-      anchors.verticalCenter: parent.verticalCenter
       text: root.helperError === "" ? root.count : "!"
       color: root.foreground
       font.family: root.fontFamily
