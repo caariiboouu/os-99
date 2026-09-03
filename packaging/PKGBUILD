@@ -21,7 +21,7 @@
 #   makepkg -si            build and install from this directory
 #   yay -S hyprland-plugin-os99-hyprbars     once it is on the AUR
 
-_os99ver=1.4.2
+_os99ver=1.4.3
 pkgname=hyprland-plugin-os99-hyprbars
 pkgver=0.56.2
 pkgrel=1

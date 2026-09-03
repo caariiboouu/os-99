@@ -228,6 +228,35 @@ fi
 #
 # It is self-limiting: the shipped configs say scale = "auto", so after a redraw
 # the stamp equals the display and the next run does nothing.
+# Do the boxes in a generated bars.lua match the ones the config asks for?
+#
+# Compared as a SET: the generator emits left-side boxes before right-side ones
+# and the config lists them per side, so order carries no information here.
+buttons_match() {
+  local lua=$1 want have
+  [[ -r $lua ]] || return 1
+  command -v python3 >/dev/null 2>&1 || return 0
+  want=$(python3 - <<'PYEOF' 2>/dev/null
+import os, tomllib
+for p in (os.environ.get("OS99_CONFIG"),
+          os.path.expanduser("~/.config/omarchy/os99-theme.toml"),
+          os.path.expanduser("~/.config/os99/os99-theme.toml"),
+          os.path.expanduser("~/.config/hypr/os99-theme.toml")):
+    if p and os.path.isfile(p):
+        b = tomllib.load(open(p, "rb")).get("buttons", {})
+        ids = list(b.get("left", ["close"])) + list(b.get("right", ["zoom", "collapse"]))
+        print(" ".join(sorted(set(ids))))
+        break
+PYEOF
+)
+  # No config found is not a mismatch: there is nothing to disagree with.
+  [[ -n $want ]] || return 0
+  have=$(grep -o 'add("/bar_[a-z]*\.png"' "$lua" 2>/dev/null |
+         sed 's/.*bar_//; s/\.png"//' | sort -u | tr '\n' ' ')
+  have=${have% }
+  [[ $want == "$have" ]]
+}
+
 regen_art_if_stale() {
   local gen="$THEME_DIR/decor/generate-art.py"
   local env_file="$THEME_DIR/decor/bar.env"
@@ -273,7 +302,16 @@ PY
 
   # Equal as NUMBERS, not as strings: "1.25" and "1.250000" are the same scale.
   if [[ -n $have ]] && python3 -c "import sys; sys.exit(0 if abs(float(sys.argv[1])-float(sys.argv[2]))<1e-6 else 1)" "$have" "$want" 2>/dev/null; then
-    return 0
+    # The scale matches, which does not mean bars.lua is current.
+    #
+    # `omarchy theme set` re-COPIES the theme from its source directory, and
+    # that source's bars.lua was written whenever that theme was last
+    # generated -- which can predate the user's choice of boxes entirely. The
+    # symptom is a right-click menu with every box ticked above a title bar
+    # carrying three of them, and it has appeared three separate ways.
+    #
+    # So compare the button list too, as a set, and redraw when it disagrees.
+    buttons_match "$THEME_DIR/decor/bars.lua" && return 0
   fi
 
   # Which palette this theme's CHROME uses. Not colors.toml's mode: noir is
