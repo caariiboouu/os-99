@@ -37,7 +37,10 @@ INSTALL=$(os99_sibling os99-install)
 # gum is Omarchy's own prompt toolkit and is always present there. Without it
 # the same choices are offered as a numbered list, so this works over ssh on a
 # machine that has never heard of Omarchy.
-have_gum() { command -v gum >/dev/null 2>&1; }
+# gum needs a terminal of its own -- without one it fails with a bubbletea TTY
+# error rather than falling back. So a missing TTY counts the same as a missing
+# gum, which also makes `os99` usable down a pipe.
+have_gum() { command -v gum >/dev/null 2>&1 && [[ -t 0 && -t 1 ]]; }
 
 say()  { printf '  %s\n' "$*"; }
 head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
@@ -107,16 +110,23 @@ cmd_windows() {
 
 cmd_boxes() {
   [[ -n $BUTTONS ]] || { say "os99-buttons is not installed"; return 1; }
-  local rows=() line state id label pick
+  # The id is kept in a parallel array rather than read back out of the line.
+  # Reading it back is how the first version broke: an off box renders as
+  # "[ ] pin", the space inside the marker splits into its own field, and the
+  # id came back as "]".
+  local rows=() ids=() state id label pick idx
   while read -r state id _side label; do
     [[ -n $id ]] || continue
-    rows+=("$(printf '%s  %-9s %s' "$([[ $state == on ]] && echo '[x]' || echo '[ ]')" "$id" "$label")")
+    ids+=("$id")
+    rows+=("$(printf '%s %-9s %s' "$([[ $state == on ]] && echo '[on] ' || echo '[off]')" "$id" "$label")")
   done < <("$BUTTONS" list 2>/dev/null)
   (( ${#rows[@]} )) || { say "could not read the box configuration"; return 1; }
   pick=$(choose "Title bar boxes -- choose one to turn on or off" "${rows[@]}") || return 0
-  id=$(awk '{print $2}' <<<"$pick")
-  [[ $id =~ ^[a-z]+$ ]] || return 1
-  "$BUTTONS" toggle "$id"
+  for idx in "${!rows[@]}"; do
+    [[ ${rows[idx]} == "$pick" ]] || continue
+    "$BUTTONS" toggle "${ids[idx]}"
+    return
+  done
 }
 
 # -------------------------------------------------------------------- status
