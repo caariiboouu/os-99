@@ -21,7 +21,7 @@
 #   makepkg -si            build and install from this directory
 #   yay -S hyprland-plugin-os99-hyprbars     once it is on the AUR
 
-_os99ver=1.4.0
+_os99ver=1.4.1
 pkgname=hyprland-plugin-os99-hyprbars
 pkgver=0.56.2
 pkgrel=1
@@ -82,18 +82,19 @@ package() {
     "${pkgdir}/usr/share/omarchy/themes/"
   find "${pkgdir}/usr/share/omarchy/themes" -name "bars.lua" -delete
 
-  # 4. The menu-bar font service, in the shell's own plugin directory. The
-  #    shell scans it and treats what it finds as first party, so a service
-  #    loads with no marketplace install and no shell.json entry. It has no
-  #    window and no bar presence: everything OS 99 used to show in QML is the
-  #    `os99` command now. The manifest is rewritten because entry points are
-  #    relative to the plugin directory and the packaged layout is flat.
-  install -Dm644 shell-plugin/os99/Service.qml \
-    "${pkgdir}/usr/share/omarchy/shell/plugins/os99/Service.qml"
+  # 4. The shell plugin, in the shell's own plugin directory. The shell scans
+  #    it and treats what it finds as first party, so it loads with no
+  #    marketplace install and no shell.json entry. It is a PANEL -- the
+  #    right-click menu on a title bar -- and it also carries the menu-bar
+  #    font, which can be set from nowhere else. No bar entry, no icon. The
+  #    manifest is rewritten because entry points are relative to the plugin
+  #    directory and the packaged layout is flat.
+  install -Dm644 shell-plugin/os99/Menu.qml \
+    "${pkgdir}/usr/share/omarchy/shell/plugins/os99/Menu.qml"
   python3 - "${pkgdir}/usr/share/omarchy/shell/plugins/os99/manifest.json" <<PYEOF
 import json, sys
 m = json.load(open("manifest.json"))
-m["entryPoints"] = {"service": "Service.qml"}
+m["entryPoints"] = {"panel": "Menu.qml"}
 json.dump(m, open(sys.argv[1], "w"), indent=2)
 PYEOF
 
