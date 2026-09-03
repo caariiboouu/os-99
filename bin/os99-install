@@ -870,16 +870,21 @@ else
   # changes the source and not the screen -- which is exactly how a fresh
   # install ended up showing three title-bar boxes while the config asked for
   # eight, and looking like it had worked.
+  # Publishing only applies to the checkout path, where the art was drawn into
+  # the theme SOURCES and has to be carried across to the live copy. The
+  # packaged path draws straight into the live copy and has nothing to carry.
   if [[ -d $THEME_SRC/os-99-platinum ]] && os99_publish_art; then
     good "art copied into the live theme"
-    # And APPLY it. Copying bars.lua into the live theme does not make the
-    # compositor read it -- os99-window-bars evals it -- so an install that
-    # stopped at the copy left the freshly drawn boxes sitting on disk while
-    # the title bar carried whatever it had before.
-    if [[ -n $(os99_sibling os99-window-bars) ]] \
-       && "$(os99_sibling os99-window-bars)" >/dev/null 2>&1; then
-      good "art applied to the running compositor"
-    fi
+  fi
+
+  # APPLYING is common to both, and separate from publishing for a reason: the
+  # first version of this hung the apply off the copy, so the packaged path --
+  # which never copies -- drew the art and then never told the compositor. The
+  # boxes and the title font sat correct on disk behind a title bar that still
+  # had the defaults.
+  if [[ -n $(os99_sibling os99-window-bars) ]] \
+     && "$(os99_sibling os99-window-bars)" >/dev/null 2>&1; then
+    good "art applied to the running compositor"
   fi
 fi
 
