@@ -908,15 +908,13 @@ done
 
 # ------------------------------------------------------------ 5b. shell plugins
 head_ "Shell plugins"
-# One Quickshell bar widget ships with OS 99. It lists windows the title bar's
-# collapse box has parked and puts them back, and it sets the menu-bar face.
-# (It used to be two widgets, j.os99-font and j.os99-minimized; they were
-# merged so the repo could carry a single root manifest, which is what
-# `omarchy plugin add` and the plugin marketplace install.)
+# One Quickshell plugin ships with OS 99, and it is a SERVICE: it sets the
+# menu-bar face and has no window, no bar entry and no popup. A first-party
+# service loads with no shell.json entry at all, so there is nothing here to
+# register -- only older entries to take back out.
 #
-# It needs two separate things: the plugin directory, which the repo carries,
-# and an entry in shell.json's bar layout, which it cannot -- shell.json is the
-# user's file.
+# (There were two widgets once, j.os99-font and j.os99-minimized, then one, and
+# now none. Everything they showed is the `os99` command.)
 
 # Drop the merged-away widgets from the bar layout before registering the new
 # one, so an upgrade does not leave dead entries the shell warns about.
@@ -941,6 +939,8 @@ retire_bar_widget() {
   backup_shelljson
   shelljson_write remove "$id" && note "$id: removed the old bar entry (backup written)"
 }
+
+retire_bar_widget "$PLUGIN_ID"
 
 # Present is not the same as loaded, and only the shell can settle it.
 os99_widget_loaded; case $? in
