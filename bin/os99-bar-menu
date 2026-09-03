@@ -1,28 +1,33 @@
 #!/bin/bash
-# Open the title bar's right-click menu at the cursor.
+# Open the box configuration when a title bar is right-clicked.
 #
 #   os99-bar-menu [0xADDRESS]
 #
 # The hyprbars fork spawns this on a right-click that lands on bar face rather
-# than on a box, passing the clicked window's address. The menu itself lives in
-# the Omarchy shell (shell-plugin/os99/Menu.qml) and is reached over shell IPC,
-# so without Omarchy this exits quietly and the CLI (`os99-buttons`) remains
-# the way to configure the boxes.
+# than on a box. It used to summon a QML popup inside omarchy-shell; that popup
+# was a graphical face on `os99-buttons`, for a decision most people make once,
+# and it cost a QML file that broke silently whenever Omarchy moved a type
+# underneath it. It opens the terminal menu instead.
+#
+# The window address is accepted and ignored. It mattered to the popup, which
+# opened at the cursor over a particular window; the boxes are a global setting
+# and always were.
 set -uo pipefail
 
-command -v hyprctl >/dev/null 2>&1 || exit 0
-command -v omarchy-shell >/dev/null 2>&1 || exit 0
+_os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
+# shellcheck source=os99-lib.sh
+source "$_os99_lib" || exit 0
 
-ADDR="${1:-}"
-# The address travels into a JSON string; it came from the compositor, but this
-# script is callable by hand, so hold it to the shape an address has.
-[[ $ADDR =~ ^(0x[0-9a-fA-F]+)?$ ]] || ADDR=""
+OS99=$(os99_sibling os99) || exit 0
+[[ -n $OS99 ]] || exit 0
 
-# "1234, 567" -> logical global coordinates, the same space the shell's
-# screens are laid out in.
-POS=$(hyprctl cursorpos 2>/dev/null) || POS=""
-X="${POS%%,*}"
-Y="${POS##*, }"
-[[ $X =~ ^-?[0-9]+$ && $Y =~ ^-?[0-9]+$ ]] || { X=0; Y=0; }
-
-exec omarchy-shell -q os99 menu "{\"x\":$X,\"y\":$Y,\"window\":\"$ADDR\"}"
+# A normal tiled terminal window. `omarchy-launch-tui` stamps an app-id that
+# Hyprland floats at a fixed size, which is not what a menu wants here.
+if command -v uwsm-app >/dev/null 2>&1 && command -v xdg-terminal-exec >/dev/null 2>&1; then
+  exec setsid uwsm-app -- xdg-terminal-exec -e "$OS99" boxes
+elif command -v xdg-terminal-exec >/dev/null 2>&1; then
+  exec setsid xdg-terminal-exec -e "$OS99" boxes
+elif [[ -n ${TERMINAL:-} ]]; then
+  exec setsid "$TERMINAL" -e "$OS99" boxes
+fi
+exit 0

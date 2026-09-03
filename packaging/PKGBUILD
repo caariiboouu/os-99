@@ -21,7 +21,7 @@
 #   makepkg -si            build and install from this directory
 #   yay -S hyprland-plugin-os99-hyprbars     once it is on the AUR
 
-_os99ver=1.3.0
+_os99ver=1.4.0
 pkgname=hyprland-plugin-os99-hyprbars
 pkgver=0.56.2
 pkgrel=1
@@ -67,6 +67,9 @@ package() {
   # 2. The helpers, as ordinary programs. os99-lib.sh is sourced rather than
   #    run, but it has to sit beside them: every script finds it as a sibling.
   install -d "${pkgdir}/usr/bin"
+  # `bin/os99` first and by name: the glob below does not match it, and it is
+  # the one command a person actually types.
+  install -m755 bin/os99 "${pkgdir}/usr/bin/os99"
   install -m755 bin/os99-* "${pkgdir}/usr/bin/"
 
   # 3. The themes, where Omarchy keeps its own. A theme in this directory is
@@ -79,19 +82,18 @@ package() {
     "${pkgdir}/usr/share/omarchy/themes/"
   find "${pkgdir}/usr/share/omarchy/themes" -name "bars.lua" -delete
 
-  # 4. The bar widget and the right-click menu, in the shell's own plugin
-  #    directory. The shell scans it and treats what it finds as first party,
-  #    so the widget is present without a marketplace install. The manifest is
-  #    rewritten because the entry points are relative to the plugin directory
-  #    and the packaged layout is flat.
-  install -Dm644 shell-plugin/os99/Os99BarWidget.qml \
-    "${pkgdir}/usr/share/omarchy/shell/plugins/os99/Os99BarWidget.qml"
-  install -Dm644 shell-plugin/os99/Menu.qml \
-    "${pkgdir}/usr/share/omarchy/shell/plugins/os99/Menu.qml"
+  # 4. The menu-bar font service, in the shell's own plugin directory. The
+  #    shell scans it and treats what it finds as first party, so a service
+  #    loads with no marketplace install and no shell.json entry. It has no
+  #    window and no bar presence: everything OS 99 used to show in QML is the
+  #    `os99` command now. The manifest is rewritten because entry points are
+  #    relative to the plugin directory and the packaged layout is flat.
+  install -Dm644 shell-plugin/os99/Service.qml \
+    "${pkgdir}/usr/share/omarchy/shell/plugins/os99/Service.qml"
   python3 - "${pkgdir}/usr/share/omarchy/shell/plugins/os99/manifest.json" <<PYEOF
 import json, sys
 m = json.load(open("manifest.json"))
-m["entryPoints"] = {"barWidget": "Os99BarWidget.qml", "panel": "Menu.qml"}
+m["entryPoints"] = {"service": "Service.qml"}
 json.dump(m, open(sys.argv[1], "w"), indent=2)
 PYEOF
 

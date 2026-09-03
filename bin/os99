@@ -1,0 +1,176 @@
+#!/bin/bash
+# OS 99, from a terminal.
+#
+#   os99            the menu
+#   os99 windows    what is parked, and put it back
+#   os99 boxes      which boxes the title bar carries
+#   os99 status     what is set up and what is not
+#
+# WHY THIS EXISTS RATHER THAN A BAR WIDGET.
+#
+# Everything here used to be QML: a bar widget for the minimized-window list and
+# a popup menu for the boxes. Both ran inside omarchy-shell, which meant both
+# depended on Omarchy's own types -- Style, Color, PopupCard, the BarWidget base
+# -- and an update to any of those could stop them loading with nothing said.
+# Most of the machinery that watched for that failure existed because they did.
+#
+# A terminal cannot do the one thing a bar can: tell you a window is parked
+# without being asked. That glance was the argument for the widget, and it was
+# judged not worth what it cost. Everything else a menu does better.
+#
+# What still runs in the shell is the menu-bar font, and only that, because
+# Style.fontFamily can be set from nowhere else -- there is no family key in a
+# theme's shell.toml and OMARCHY_MENU_FONT reaches the popups but not the bar.
+# It is a headless service now, with no bar presence at all.
+set -uo pipefail
+
+_os99_lib="$(dirname -- "$(readlink -f "$0")")/os99-lib.sh"
+# shellcheck source=os99-lib.sh
+source "$_os99_lib" || { echo "os99: missing $_os99_lib" >&2; exit 1; }
+
+os99_use_hyprland || true
+
+MINIMIZE=$(os99_sibling os99-minimize)
+BUTTONS=$(os99_sibling os99-buttons)
+INSTALL=$(os99_sibling os99-install)
+
+# gum is Omarchy's own prompt toolkit and is always present there. Without it
+# the same choices are offered as a numbered list, so this works over ssh on a
+# machine that has never heard of Omarchy.
+have_gum() { command -v gum >/dev/null 2>&1; }
+
+say()  { printf '  %s\n' "$*"; }
+head_() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+# Present a list and answer with the chosen line. Arguments are the choices.
+choose() {
+  local header=$1; shift
+  (( $# )) || return 1
+  if have_gum; then
+    printf '%s\n' "$@" | gum choose --header="$header" || return 1
+  else
+    local i=1 line
+    printf '\n%s\n' "$header" >&2
+    for line in "$@"; do printf '  %2d) %s\n' "$i" "$line" >&2; i=$((i+1)); done
+    printf '  choice (empty to go back): ' >&2
+    read -r line || return 1
+    [[ -n $line && $line =~ ^[0-9]+$ && $line -ge 1 && $line -le $# ]] || return 1
+    printf '%s\n' "${!line}"
+  fi
+}
+
+confirm() {
+  if have_gum; then gum confirm "$1"
+  else
+    local a; printf '%s [y/N] ' "$1" >&2; read -r a; [[ ${a,,} == y* ]]
+  fi
+}
+
+# ------------------------------------------------------------------- windows
+
+windows_lines() {
+  # N, address, class, title -> "N  title (class)". The address is kept in a
+  # parallel array so a title can hold anything at all without being parsed.
+  ADDRS=(); LINES=()
+  local n addr class title
+  while IFS=$'\t' read -r n addr class title; do
+    [[ -n $addr ]] || continue
+    ADDRS+=("$addr")
+    LINES+=("$(printf '%-2s %s  (%s)' "$n" "${title:-$class}" "$class")")
+  done < <("$MINIMIZE" list 2>/dev/null)
+}
+
+cmd_windows() {
+  [[ -n $MINIMIZE ]] || { say "os99-minimize is not installed"; return 1; }
+  windows_lines
+  if (( ${#LINES[@]} == 0 )); then
+    head_ "Minimized windows"
+    say "Nothing is parked."
+    say "The collapse box on a title bar puts a window here."
+    return 0
+  fi
+  local pick idx
+  pick=$(choose "Minimized windows -- choose one to bring back" \
+                "${LINES[@]}" "restore them all") || return 0
+  if [[ $pick == "restore them all" ]]; then
+    "$MINIMIZE" restore-all && say "restored them all"
+    return 0
+  fi
+  for idx in "${!LINES[@]}"; do
+    [[ ${LINES[idx]} == "$pick" ]] || continue
+    "$MINIMIZE" restore "${ADDRS[idx]}" && say "restored ${ADDRS[idx]}"
+    return 0
+  done
+}
+
+# --------------------------------------------------------------------- boxes
+
+cmd_boxes() {
+  [[ -n $BUTTONS ]] || { say "os99-buttons is not installed"; return 1; }
+  local rows=() line state id label pick
+  while read -r state id _side label; do
+    [[ -n $id ]] || continue
+    rows+=("$(printf '%s  %-9s %s' "$([[ $state == on ]] && echo '[x]' || echo '[ ]')" "$id" "$label")")
+  done < <("$BUTTONS" list 2>/dev/null)
+  (( ${#rows[@]} )) || { say "could not read the box configuration"; return 1; }
+  pick=$(choose "Title bar boxes -- choose one to turn on or off" "${rows[@]}") || return 0
+  id=$(awk '{print $2}' <<<"$pick")
+  [[ $id =~ ^[a-z]+$ ]] || return 1
+  "$BUTTONS" toggle "$id"
+}
+
+# -------------------------------------------------------------------- status
+
+cmd_status() {
+  [[ -n $INSTALL ]] || { say "os99-install is not installed"; return 1; }
+  local json
+  json=$("$INSTALL" --status 2>/dev/null) || { say "could not read the status"; return 1; }
+  head_ "OS 99"
+  python3 - "$json" <<'PYEOF'
+import json, sys
+d = json.loads(sys.argv[1])
+for s in d.get("steps", []):
+    print("  %s %s" % ("[x]" if s["done"] else "[ ]", s["label"]))
+    if not s["done"] and not s["fixable"] and s.get("hint"):
+        print("      %s" % s["hint"])
+if d.get("interrupted"):
+    print("\n  A previous run did not finish. Your theme before it was %s."
+          % d["interrupted"].get("themeBefore", "unknown"))
+if not d.get("ready"):
+    print("\n  %s" % (d.get("headline") or "Something is outstanding."))
+PYEOF
+  python3 -c "import json,sys; sys.exit(0 if json.loads(sys.argv[1])['ready'] else 1)" "$json" && return 0
+  confirm "Finish setting up OS 99 now?" || return 0
+  "$INSTALL" --auto
+}
+
+# ---------------------------------------------------------------------- menu
+
+menu() {
+  local parked=0 pick
+  [[ -n $MINIMIZE ]] && parked=$("$MINIMIZE" count 2>/dev/null | tr -dc '0-9')
+  while :; do
+    pick=$(choose "OS 99" \
+      "Minimized windows${parked:+ ($parked parked)}" \
+      "Title bar boxes" \
+      "Status and setup" \
+      "Quit") || return 0
+    case $pick in
+      Minimized*) cmd_windows ;;
+      Title*)     cmd_boxes ;;
+      Status*)    cmd_status ;;
+      Quit|"")    return 0 ;;
+    esac
+    [[ -n $MINIMIZE ]] && parked=$("$MINIMIZE" count 2>/dev/null | tr -dc '0-9')
+  done
+}
+
+case "${1:-menu}" in
+  menu)    menu ;;
+  windows) cmd_windows ;;
+  boxes)   cmd_boxes ;;
+  status)  cmd_status ;;
+  -h|--help|help)
+    sed -n '2,8p' "$0" | sed 's/^# \?//' ;;
+  *) echo "os99: unknown command '$1' (windows | boxes | status)" >&2; exit 2 ;;
+esac

@@ -41,7 +41,7 @@ source "$_os99_lib" || { echo "os99-install: missing $_os99_lib" >&2; exit 1; }
 
 # Bumped by hand, and checked against manifest.json by --selftest: a version
 # that only one of them knows is a version nobody can trust.
-OS99_VERSION="1.3.0"
+OS99_VERSION="1.4.0"
 
 CHECK=false
 AUTO=false
@@ -222,9 +222,21 @@ if $STATUS; then
   st_deps=false;   command -v python3 >/dev/null 2>&1 && command -v hyprctl >/dev/null 2>&1 &&
                    python3 -c 'import tomllib' 2>/dev/null && st_deps=true
   st_files=false;  [[ -f $TOML && -f $GEN && -f $HOOKS/os99-bars-hook.sh ]] && st_files=true
-  st_art=false;    [[ -f $HOME/.config/omarchy/themes/os-99-platinum/decor/bar.env ]] && st_art=true
+  # Art counts as drawn if it is where it will be READ from. A checkout draws
+  # into the theme sources and copies across; a package draws straight into the
+  # live copy, and its sources are root-owned and hold no art at all. Asking
+  # only about the sources reported every packaged install as missing its art.
+  st_art=false
+  for _a in "$HOME/.local/state/omarchy/current/theme/decor/bar.env" \
+            "$HOME/.config/omarchy/themes/os-99-platinum/decor/bar.env"; do
+    [[ -f $_a ]] && { st_art=true; break; }
+  done
+  # The shell plugin is a service: first party plugins load without any
+  # shell.json entry, and a marketplace install records itself in plugins[].
+  # So the question is whether the SERVICE ANSWERS, not whether a layout
+  # mentions it -- a layout entry would be left over from an older version.
   st_widget=false
-  [[ -f $SHELLJSON ]] && shelljson has "$PLUGIN_ID" 2>/dev/null && st_widget=true
+  os99_widget_loaded && st_widget=true
   st_plugin=false; hyprctl plugin list 2>/dev/null | grep -q hyprbars && st_plugin=true
 
   # A plugin that is not loaded has two very different stories behind it, and
@@ -278,7 +290,7 @@ steps = [
      "install python3 (3.11+) and Hyprland"),
     ("files",  "theme files and hooks",     flag("FILES"),  True,  ""),
     ("art",    "window art for this display", flag("ART"),  True,  ""),
-    ("widget", "widget on the status bar",  flag("WIDGET"), True,  ""),
+    ("shell",  "menu-bar font service",      flag("WIDGET"), True,  ""),
     ("plugin", plugin_label,                flag("PLUGIN"), flag("HYPRPM"),
      "install hyprpm (it ships with Hyprland)"),
     ("theme",  "OS 99 theme applied",       flag("THEME"),  True,  ""),
@@ -353,8 +365,8 @@ if $SELFTEST; then
     cd "$1" || exit 1
     for f in manifest.json hyprpm.toml LICENSE README.md os99-theme.toml \
              bin/os99-lib.sh bin/os99-install bin/os99-run bin/os99-minimize \
-             bin/os99-buttons bin/os99-window-bars \
-             shell-plugin/os99/Os99BarWidget.qml shell-plugin/os99/Menu.qml \
+             bin/os99-buttons bin/os99-window-bars bin/os99 \
+             shell-plugin/os99/Service.qml \
              plugin/hyprbars/Makefile themes/os-99-platinum/decor/generate-art.py; do
       [[ -e $f ]] || { echo "missing: $f"; exit 1; }
     done' _ "$REPO_ROOT"
@@ -387,8 +399,7 @@ if $SELFTEST; then
   # A QML syntax error does not raise anything anyone sees: the widget simply
   # never appears. qmllint is the only thing that catches it before a user does.
   if command -v qmllint >/dev/null 2>&1; then
-    t "every QML file parses" qmllint "$REPO_ROOT/shell-plugin/os99/Os99BarWidget.qml" \
-                                      "$REPO_ROOT/shell-plugin/os99/Menu.qml"
+    t "every QML file parses" qmllint "$REPO_ROOT/shell-plugin/os99/Service.qml"
   else
     note "qmllint not installed -- QML is unchecked"
   fi
@@ -667,9 +678,9 @@ else
       # these along by itself; this is the other route saying the same thing.
       # os99-install itself goes too: the widget offers to finish the setup,
       # and it can only do that if the thing that finishes it is beside it.
-      for h in os99-lib.sh os99-run os99-minimize os99-buttons os99-menubar-font \
+      for h in os99 os99-lib.sh os99-run os99-minimize os99-buttons os99-menubar-font \
                os99-theme-reload os99-install os99-window-bars os99-hyprbars-rebuild \
-               os99-widget-check; do
+               os99-widget-check os99-bar-menu; do
         install -m755 "$REPO/bin/$h" "$plugdir/bin/$h"
       done
       good "bar widget + helpers -> ~/.config/omarchy/plugins/$PLUGIN_ID"
@@ -918,47 +929,25 @@ if [[ -f $SHELLJSON ]] && ! $CHECK; then
   fi
 fi
 
-register_bar_widget() {
-  local id=$1 dir=""
-  # Two places a plugin can live: the user's own plugin directory, where
-  # `omarchy plugin add` puts a clone, and the shell's own, where a package
-  # puts it and the shell treats it as first party.
-  for _d in "$HOME/.config/omarchy/plugins/$1" \
-            /usr/share/omarchy/shell/plugins/os99; do
-    [[ -d $_d ]] && { dir="$_d"; break; }
-  done
-
-  if [[ -n $dir ]]; then good "$id: present ($dir)"
-  else bad "$id: not installed in either plugin directory"; return; fi
-
-  if [[ ! -f $SHELLJSON ]]; then
-    note "$id: no shell.json, so nothing to register it in"
-    return
-  fi
-
-  if shelljson has "$id" 2>/dev/null; then
-    good "$id: registered in shell.json bar layout"
-    return
-  fi
-
-  if $CHECK; then
-    bad "$id: not registered in shell.json (--check: not modifying)"
-    return
-  fi
-
+# OS 99's shell plugin is a SERVICE now -- no bar entry, no popup, nothing to
+# place in a layout. What is left to do about the bar layout is take out the
+# entry an older version put there, so an upgrade does not leave a widget id
+# the shell warns about.
+retire_bar_widget() {
+  local id=$1
+  [[ -f $SHELLJSON ]] || return 0
+  shelljson has "$id" 2>/dev/null || return 0
+  $CHECK && { note "$id: an old bar entry is still in shell.json (--check: leaving it)"; return 0; }
   backup_shelljson
-  if shelljson_write add "$id"
-  then good "$id: added to shell.json (backup written)"
-  else bad "$id: could not edit shell.json -- add {\"id\": \"$id\"} to bar.layout yourself"; fi
+  shelljson_write remove "$id" && note "$id: removed the old bar entry (backup written)"
 }
 
-register_bar_widget "$PLUGIN_ID"
-
-# Registered is not the same as loaded, and only the shell can settle it.
+# Present is not the same as loaded, and only the shell can settle it.
 os99_widget_loaded; case $? in
-  0) good "$PLUGIN_ID: QML is loaded in the running shell" ;;
+  0) good "$PLUGIN_ID: the font service is loaded in the running shell" ;;
   2) note "$PLUGIN_ID: no shell running, so nothing to load into" ;;
-  *) bad "$PLUGIN_ID: registered but its QML did not load"
+  *) bad "$PLUGIN_ID: installed but its service did not load"
+     say "      the menu bar keeps the system font; everything else works"
      say "      journalctl --user -e | grep caariiboouu   shows why" ;;
 esac
 
