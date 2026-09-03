@@ -41,7 +41,7 @@ source "$_os99_lib" || { echo "os99-install: missing $_os99_lib" >&2; exit 1; }
 
 # Bumped by hand, and checked against manifest.json by --selftest: a version
 # that only one of them knows is a version nobody can trust.
-OS99_VERSION="1.2.1"
+OS99_VERSION="1.3.0"
 
 CHECK=false
 AUTO=false
@@ -73,7 +73,27 @@ esac
 PLUGIN_ID="io.github.caariiboouu.os-99"
 SHELLJSON="$HOME/.config/omarchy/shell.json"
 TOML="$HOME/.config/omarchy/os99-theme.toml"
-GEN="$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py"
+# The generator, wherever it landed. A checkout install copies the themes into
+# ~/.config/omarchy/themes and the generator rides along; a package puts them in
+# /usr/share/omarchy/themes, where they are read-only and where Omarchy treats
+# them as built-in.
+GEN=""
+for _g in "$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py" \
+          "/usr/share/omarchy/themes/os-99-platinum/decor/generate-art.py"; do
+  [[ -f $_g ]] && { GEN="$_g"; break; }
+done
+[[ -n $GEN ]] || GEN="$HOME/.config/omarchy/themes/os-99-platinum/decor/generate-art.py"
+# Writable theme sources, or none. A package owns its themes as root, so the art
+# cannot be drawn into them and is drawn straight into the live copy instead.
+THEME_SRC="$HOME/.config/omarchy/themes"
+# The hook scripts, from a checkout or from a package. They have to be installed
+# into the user's own hook directories either way -- those are per-user, and a
+# package cannot write to $HOME.
+HOOK_SRC=""
+for _h in "$(cd -- "$(dirname -- "$(readlink -f "$0")")/.." && pwd)/hooks" \
+          /usr/share/os99/hooks; do
+  [[ -d $_h ]] && { HOOK_SRC="$_h"; break; }
+done
 HOOKS="$HOME/.config/omarchy/hooks/theme-set.d"
 LOOKNFEEL="$HOME/.config/hypr/looknfeel.lua"
 
@@ -410,11 +430,17 @@ for k in (\"ready\", \"canFix\", \"steps\", \"headline\", \"action\", \"reason\"
 if not isinstance(d[\"steps\"], list) or not d[\"steps\"]:
     raise SystemExit(\"no steps\")
 "' _ "$REPO_ROOT"
+  t "os99-run refuses a name that is not one of our helpers" bash -c '
+    cp "$1/bin/os99-run" "$2/os99-run"
+    cp /bin/echo "$2/os99-notahelper"
+    "$2/os99-run" -- "$2/os99-notahelper" hi >/dev/null 2>&1 && { echo "it ran"; exit 1; }
+    exit 0' _ "$REPO_ROOT" "$TMP"
   t "os99-run refuses a program that is not one of ours" bash -c '
     "$1/bin/os99-run" -- /bin/echo hi >/dev/null 2>&1 && { echo "it ran /bin/echo"; exit 1; }
     exit 0' _ "$REPO_ROOT"
   t "os99-run holds a deadline and kills the whole group" bash -c '
-    d=$2/hang; printf "#!/bin/bash\nsleep 60 &\nsleep 60\n" > "$d"; chmod +x "$d"
+    d=$2/os99-window-bars   # a name on os99-run'"'"'s allowlist, in a throwaway dir
+    printf "#!/bin/bash\nsleep 60 &\nsleep 60\n" > "$d"; chmod +x "$d"
     cp "$1/bin/os99-run" "$2/os99-run"
     "$2/os99-run" --deadline 1 -- "$d" >/dev/null 2>&1
     [[ $? -eq 124 ]] || { echo "expected exit 124"; exit 1; }
@@ -422,13 +448,13 @@ if not isinstance(d[\"steps\"], list) or not d[\"steps\"]:
     pgrep -f "^sleep 60$" >/dev/null && { echo "a child outlived the deadline"; exit 1; }
     exit 0' _ "$REPO_ROOT" "$TMP"
   t "os99-run caps stdout" bash -c '
-    cat > "$2/spew" <<"SPEW"
+    cat > "$2/os99-minimize" <<"SPEW"
 #!/bin/bash
 head -c 200000 /dev/zero | tr "\0" "x"
 SPEW
-    chmod +x "$2/spew"
+    chmod +x "$2/os99-minimize"
     cp "$1/bin/os99-run" "$2/os99-run"
-    n=$("$2/os99-run" --max-stdout 4096 -- "$2/spew" | wc -c)
+    n=$("$2/os99-run" --max-stdout 4096 -- "$2/os99-minimize" | wc -c)
     [[ $n -eq 4096 ]] || { echo "got $n bytes, wanted 4096"; exit 1; }' _ "$REPO_ROOT" "$TMP"
 
   head_ "Writing"
@@ -589,18 +615,6 @@ else
 
   # Hooks go through omarchy's own installer when it exists, so they land
   # wherever it decides they belong; otherwise copy them ourselves.
-  if command -v omarchy-hook-install >/dev/null 2>&1; then
-    for t in theme-set post-boot; do
-      for f in "$REPO"/hooks/$t.d/*; do
-        [[ -e $f ]] || continue
-        omarchy-hook-install "$t" "$f" >/dev/null 2>&1 || install -Dm755 "$f" "$HOME/.config/omarchy/hooks/$t.d/$(basename "$f")"
-      done
-    done
-    good "hooks -> ~/.config/omarchy/hooks/*.d"
-  else
-    note "no Omarchy -- skipping hooks (nothing to hook into)"
-  fi
-
   if [[ -d $HOME/.config/omarchy/themes || -d $HOME/.config/omarchy ]]; then
     install -d "$HOME/.config/omarchy/themes"
     for t in "$REPO"/themes/*; do cp -r "$t" "$HOME/.config/omarchy/themes/"; done
@@ -679,6 +693,26 @@ fi
 head_ "Config and generator"
 [[ -f $TOML ]] && good "config $TOML" || bad "config missing: $TOML"
 [[ -f $GEN  ]] && good "generator present" || bad "generator missing: $GEN"
+
+# The hooks go in whether or not this is a checkout: a packaged install has no
+# $REPO to copy from, but it still needs the theme-set hook that loads the frame
+# plugin and the post-boot hook that checks the widget loaded.
+if ! $CHECK; then
+  if [[ -z $HOOK_SRC ]]; then
+    note "no hook scripts found to install"
+  elif command -v omarchy-hook-install >/dev/null 2>&1; then
+    for t in theme-set post-boot; do
+      for f in "$HOOK_SRC/$t.d"/*; do
+        [[ -e $f ]] || continue
+        omarchy-hook-install "$t" "$f" >/dev/null 2>&1 \
+          || install -Dm755 "$f" "$HOME/.config/omarchy/hooks/$t.d/$(basename "$f")"
+      done
+    done
+    good "hooks -> ~/.config/omarchy/hooks/*.d"
+  else
+    note "no Omarchy -- skipping hooks (nothing to hook into)"
+  fi
+fi
 
 # -------------------------------------------------------------------- 2. scale
 head_ "Display scale"
@@ -769,7 +803,25 @@ else
   if [[ -n $GENOUT ]]; then
     trap 'rm -rf -- "$GENOUT"' EXIT
     log="$GENOUT/generate.log"
-    if python3 "$GEN" > "$log" 2>&1; then
+    # Two ways to draw, and which one depends on whether the theme sources are
+    # ours to write. From a checkout they are, so all three themes are redrawn
+    # and the live copy is refreshed from the current one. From a package they
+    # are root-owned, so the art goes straight into the live copy -- which is
+    # the only place it is read from anyway.
+    GEN_ARGS=()
+    if [[ ! -d $THEME_SRC/os-99-platinum ]]; then
+      _live="$HOME/.local/state/omarchy/current/theme"
+      _cur=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo)
+      case $_cur in
+        os-99-graphite) GEN_ARGS=(--out "$_live/decor" --palette dark) ;;
+        os-99-*)        GEN_ARGS=(--out "$_live/decor" --palette light) ;;
+        *)              GEN_ARGS=() ;;   # not wearing ours; nothing to draw into
+      esac
+    fi
+    if [[ ! -d $THEME_SRC/os-99-platinum && ${#GEN_ARGS[@]} -eq 0 ]]; then
+      note "no OS 99 theme is active, so there is nowhere to draw the art"
+      : > "$log"
+    elif python3 "$GEN" "${GEN_ARGS[@]}" > "$log" 2>&1; then
       grep -E "^  (scale|font|bar height|ridge|hatch rows|bezel)" "$log" | sed 's/^  /  /'
       if grep -q "MISALIGNED\|<-- " "$log"; then
         note "the generator flagged something above -- read it before shipping"
@@ -788,7 +840,7 @@ else
   # changes the source and not the screen -- which is exactly how a fresh
   # install ended up showing three title-bar boxes while the config asked for
   # eight, and looking like it had worked.
-  if os99_publish_art; then
+  if [[ -d $THEME_SRC/os-99-platinum ]] && os99_publish_art; then
     good "art copied into the live theme"
     # And APPLY it. Copying bars.lua into the live theme does not make the
     # compositor read it -- os99-window-bars evals it -- so an install that

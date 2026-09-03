@@ -78,10 +78,16 @@ BarWidget {
       u = u.substring(7)
     return decodeURIComponent(u)
   }
-  readonly property string runner: pluginRoot + "bin/os99-run"
-  readonly property string minimizer: pluginRoot + "bin/os99-minimize"
-  readonly property string fontProbe: pluginRoot + "bin/os99-menubar-font"
-  readonly property string installer: pluginRoot + "bin/os99-install"
+  // Where the helpers are. A plugin installed from git is a checkout, so they
+  // sit in its own bin/. A packaged install puts this QML under /usr/share and
+  // the helpers become ordinary programs in /usr/bin. The prefix decides it --
+  // no probing, because QML cannot ask whether a file exists.
+  readonly property string helperDir:
+    pluginRoot.indexOf("/usr/") === 0 ? "/usr/bin/" : pluginRoot + "bin/"
+  readonly property string runner: helperDir + "os99-run"
+  readonly property string minimizer: helperDir + "os99-minimize"
+  readonly property string fontProbe: helperDir + "os99-menubar-font"
+  readonly property string installer: helperDir + "os99-install"
 
   // Seconds a helper may take, and bytes it may say. A list of parked windows
   // is a few hundred bytes; anything approaching these numbers is a fault, not
@@ -659,7 +665,7 @@ BarWidget {
       Text {
         visible: root.helperError !== ""
         width: column.width
-        text: "Expected: " + root.pluginRoot + "bin/\n"
+        text: "Expected: " + root.helperDir + "\n"
               + "Reinstall the plugin, or run bin/os99-install from a checkout.\n"
               + "Parked windows are still on the os99-minimized workspace."
         color: root.foreground

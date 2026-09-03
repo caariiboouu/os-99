@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.caariiboouu.os-99",
   "name": "OS 99",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "author": "Joel Cuthriell",
   "license": "MIT",
   "description": "Mac OS 9-style window chrome for Hyprland: pinstriped title bars, bezelled nine-patch frames, minimize-to-bar, configurable title-bar boxes, and three full Omarchy themes (Platinum, Graphite, Noir).",

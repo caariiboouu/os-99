@@ -82,15 +82,28 @@ def parse_args(argv):
     return opts, cmd
 
 
+# The helpers this may run, by name. The directory test below is strong while
+# that directory is a plugin's own bin/; it is nearly meaningless once this is
+# packaged into /usr/bin, which holds every program on the machine. Both tests
+# apply, so a packaged os99-run can start os99-minimize and nothing else.
+HELPERS = {
+    "os99-minimize", "os99-buttons", "os99-menubar-font", "os99-install",
+    "os99-theme-reload", "os99-window-bars", "os99-hyprbars-rebuild",
+    "os99-widget-check", "os99-bar-menu",
+}
+
+
 def vetted(path):
-    """The helper must be one of ours: an absolute path that resolves, through
-    every symlink, to a regular executable file in this script's own directory.
-    Checked on the resolved path so a link planted in bin/ cannot point out of
-    it, and the same resolved path is what gets executed."""
+    """The helper must be one of ours: a known name, at an absolute path that
+    resolves, through every symlink, to a regular executable file in this
+    script's own directory. Checked on the resolved path so a link planted
+    beside us cannot point out, and the resolved path is what gets executed."""
     if not path.startswith("/"):
         die("helper path must be absolute, got %r" % path)
     here = os.path.realpath(os.path.dirname(os.path.abspath(__file__)))
     real = os.path.realpath(path)
+    if os.path.basename(real) not in HELPERS:
+        die("refusing to run %r: not one of the OS 99 helpers" % path)
     if os.path.dirname(real) != here:
         die("refusing to run %r: not in %s" % (path, here))
     if not os.path.isfile(real) or not os.access(real, os.X_OK):

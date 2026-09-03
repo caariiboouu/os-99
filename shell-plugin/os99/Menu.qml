@@ -48,8 +48,14 @@ Item {
       u = u.substring(7)
     return decodeURIComponent(u)
   }
-  readonly property string runner: pluginRoot + "bin/os99-run"
-  readonly property string buttonsCli: pluginRoot + "bin/os99-buttons"
+  // Where the helpers are. A plugin installed from git is a checkout, so they
+  // sit in its own bin/. A packaged install puts this QML under /usr/share and
+  // the helpers become ordinary programs in /usr/bin. The prefix decides it --
+  // no probing, because QML cannot ask whether a file exists.
+  readonly property string helperDir:
+    pluginRoot.indexOf("/usr/") === 0 ? "/usr/bin/" : pluginRoot + "bin/"
+  readonly property string runner: helperDir + "os99-run"
+  readonly property string buttonsCli: helperDir + "os99-buttons"
 
   readonly property int deadline: 5
   // Toggling a box is not just an edit: it redraws every piece of art and
@@ -152,7 +158,7 @@ Item {
       if (!lister.running && !root.listerStarted) {
         listerWatchdog.stop()
         root.entries = []
-        root.failure = "OS 99 helpers not found in " + root.pluginRoot + "bin/"
+        root.failure = "OS 99 helpers not found in " + root.helperDir
         root.opened = true
       }
     }
@@ -184,7 +190,7 @@ Item {
         // Nothing to show is never nothing to say: the menu is the only visible
         // sign that the boxes are configurable at all.
         root.failure = code === 125 || code === 126 || code === 127
-                       ? "OS 99 helpers not found in " + root.pluginRoot + "bin/"
+                       ? "OS 99 helpers not found in " + root.helperDir
                        : (code === 124 ? "os99-buttons timed out"
                                        : "os99-buttons failed (" + code + ")")
         root.opened = true
