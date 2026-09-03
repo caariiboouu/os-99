@@ -95,7 +95,10 @@ m["entryPoints"] = {"barWidget": "Os99BarWidget.qml", "panel": "Menu.qml"}
 json.dump(m, open(sys.argv[1], "w"), indent=2)
 PYEOF
 
-  # 5. The hooks. These have to end up in the user's own hook directories,
+  # 5. The default tuning file, for os99-install to copy when the user has none.
+  install -Dm644 os99-theme.toml "${pkgdir}/usr/share/os99/os99-theme.toml"
+
+  # 6. The hooks. These have to end up in the user's own hook directories,
   #    which a package cannot write, so os99-install copies them from here.
   install -d "${pkgdir}/usr/share/os99/hooks"
   cp -r hooks/. "${pkgdir}/usr/share/os99/hooks/"

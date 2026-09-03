@@ -89,6 +89,14 @@ THEME_SRC="$HOME/.config/omarchy/themes"
 # The hook scripts, from a checkout or from a package. They have to be installed
 # into the user's own hook directories either way -- those are per-user, and a
 # package cannot write to $HOME.
+# The default tuning file, from a checkout or from a package. It is only ever
+# copied when the user has none: an existing one is theirs.
+CONFIG_SRC=""
+for _c in "$(cd -- "$(dirname -- "$(readlink -f "$0")")/.." && pwd)/os99-theme.toml" \
+          /usr/share/os99/os99-theme.toml; do
+  [[ -f $_c ]] && { CONFIG_SRC="$_c"; break; }
+done
+
 HOOK_SRC=""
 for _h in "$(cd -- "$(dirname -- "$(readlink -f "$0")")/.." && pwd)/hooks" \
           /usr/share/os99/hooks; do
@@ -694,7 +702,9 @@ else
     d=$(dirname "$dest")
     [[ -d $d ]] || continue
     if [[ -f $dest ]]; then good "config already present at ${dest/#$HOME/\~} -- left alone"
-    else install -Dm644 "$REPO/os99-theme.toml" "$dest"; good "config -> ${dest/#$HOME/\~}"; fi
+    elif [[ -n $CONFIG_SRC ]]; then
+      install -Dm644 "$CONFIG_SRC" "$dest"; good "config -> ${dest/#$HOME/\~}"
+    else bad "no default config to copy"; fi
     break
   done
 fi
@@ -941,6 +951,32 @@ os99_widget_loaded; case $? in
 esac
 
 # ------------------------------------------------------------------- 6. plugin
+# -------------------------------------------------------------------- 8. theme
+head_ "Theme"
+THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
+if [[ $THEME_NAME == os-99-* ]]; then
+  good "applied ($THEME_NAME)"
+elif $CHECK; then
+  bad "not applied (--check: not changing it)"
+elif $AUTO && command -v omarchy >/dev/null 2>&1; then
+  # Noir is the one to land on: light OS 9 chrome around dark content. The
+  # frames and the menu bar are the point of this theme, and Noir shows them
+  # without also making every editor and terminal white.
+  say "applying Os 99 Noir"
+  if omarchy theme set "Os 99 Noir" >/dev/null 2>&1; then
+    good "applied"
+  else
+    bad "could not apply -- run: omarchy theme set \"Os 99 Noir\""
+  fi
+else
+  bad "not applied yet -- run: omarchy theme set \"Os 99 Noir\""
+fi
+
+# The theme goes on BEFORE the frame plugin is asked about, because the theme is
+# what loads it: os99-window-bars only loads hyprbars while an OS 99 theme is
+# active, and it is right to do so -- nobody wants OS 99 title bars on somebody
+# else's theme. Asking first meant a fresh install always found the plugin
+# unloaded, and went off to build one it already had.
 head_ "hyprbars fork"
 # This is the piece a theme repo genuinely cannot carry: it is a compiled .so,
 # and it must be built against the running Hyprland's headers.
@@ -1050,27 +1086,6 @@ if [[ -f $LOOKNFEEL ]] && grep -q "os99.marker" "$LOOKNFEEL"; then
   note "looknfeel.lua still branches on os99.marker -- harmless, no longer needed"
 else
   good "nothing to edit: the plugin forces square, flat frames per window"
-fi
-
-# -------------------------------------------------------------------- 8. theme
-head_ "Theme"
-THEME_NAME=$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || echo "")
-if [[ $THEME_NAME == os-99-* ]]; then
-  good "applied ($THEME_NAME)"
-elif $CHECK; then
-  bad "not applied (--check: not changing it)"
-elif $AUTO && command -v omarchy >/dev/null 2>&1; then
-  # Noir is the one to land on: light OS 9 chrome around dark content. The
-  # frames and the menu bar are the point of this theme, and Noir shows them
-  # without also making every editor and terminal white.
-  say "applying Os 99 Noir"
-  if omarchy theme set "Os 99 Noir" >/dev/null 2>&1; then
-    good "applied"
-  else
-    bad "could not apply -- run: omarchy theme set \"Os 99 Noir\""
-  fi
-else
-  bad "not applied yet -- run: omarchy theme set \"Os 99 Noir\""
 fi
 
 head_ "Summary"
