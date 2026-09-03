@@ -168,6 +168,35 @@ os99_loaded_so() {
   grep -o "/[^ ]*libhyprbars[^ ]*" "/proc/$pid/maps" 2>/dev/null | sort -u | head -1
 }
 
+# The INODE of the mapped library, from the same maps line. Field 5.
+#
+# Needed because a package replaces the file at a fixed path: the mapped path
+# and the newest path are then the same string while the bytes behind them are
+# not, and comparing paths says everything is fine. Hyprland keeps the old
+# inode mapped until something unloads it, so the inode is the honest answer.
+os99_loaded_so_inode() {
+  local pid
+  pid=$(pgrep -x Hyprland 2>/dev/null | head -1)
+  [[ -n $pid && -r /proc/$pid/maps ]] || return 1
+  awk '$6 ~ /libhyprbars/ { print $5; exit }' "/proc/$pid/maps" 2>/dev/null
+}
+
+# Is the running plugin something other than the newest one on disk?
+# Prints the two paths when it is.
+os99_so_stale() {
+  local live newest live_ino disk_ino
+  live=$(os99_loaded_so) || return 1
+  newest=$(os99_newest_so) || return 1
+  if [[ $live != "$newest" ]]; then
+    [[ $newest -nt $live ]] || return 1
+  else
+    live_ino=$(os99_loaded_so_inode) || return 1
+    disk_ino=$(stat -c %i "$newest" 2>/dev/null) || return 1
+    [[ -n $live_ino && $live_ino != "$disk_ino" ]] || return 1
+  fi
+  printf '%s\n%s\n' "$live" "$newest"
+}
+
 # ----------------------------------------------------------------------- art
 #
 # Copy freshly drawn art into the LIVE theme.

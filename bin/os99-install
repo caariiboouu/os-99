@@ -1002,13 +1002,17 @@ if hyprctl plugin list 2>/dev/null | grep -q hyprbars; then
   # Installing a newer plugin does not swap the one already mapped -- Hyprland
   # does not fully dlclose, so the running one keeps running. Nothing else would
   # mention that, and the symptom is a fix that appears not to have worked.
-  _live=$(os99_loaded_so || echo)
-  _newest=$(os99_newest_so || echo)
-  if [[ -n $_live && -n $_newest && $_live != "$_newest" && $_newest -nt $_live ]]; then
-    note "a newer build is installed than the one running:"
-    say "      running: $_live"
-    say "      newest:  $_newest"
-    say "      Restart Hyprland to use it."
+  if _stale=$(os99_so_stale); then
+    _live=$(sed -n 1p <<<"$_stale"); _newest=$(sed -n 2p <<<"$_stale")
+    if [[ $_live == "$_newest" ]]; then
+      note "the plugin file has been replaced since it was loaded:"
+      say "      $_live"
+    else
+      note "a newer build is installed than the one running:"
+      say "      running: $_live"
+      say "      newest:  $_newest"
+    fi
+    say "      Restart Hyprland, or: hyprctl plugin unload $_live && os99-window-bars"
   fi
 elif $AUTO && [[ -f /usr/lib/libhyprbars-os99.so || -r $HOME/.local/lib/libhyprbars-os99.path ]] \
      && [[ -n $(os99_sibling os99-window-bars) ]] \
