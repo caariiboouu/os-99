@@ -884,9 +884,17 @@ if [[ -f $SHELLJSON ]] && ! $CHECK; then
 fi
 
 register_bar_widget() {
-  local id=$1 dir="$HOME/.config/omarchy/plugins/$1"
+  local id=$1 dir=""
+  # Two places a plugin can live: the user's own plugin directory, where
+  # `omarchy plugin add` puts a clone, and the shell's own, where a package
+  # puts it and the shell treats it as first party.
+  for _d in "$HOME/.config/omarchy/plugins/$1" \
+            /usr/share/omarchy/shell/plugins/os99; do
+    [[ -d $_d ]] && { dir="$_d"; break; }
+  done
 
-  if [[ -d $dir ]]; then good "$id: present"; else bad "$id: missing $dir"; return; fi
+  if [[ -n $dir ]]; then good "$id: present ($dir)"
+  else bad "$id: not installed in either plugin directory"; return; fi
 
   if [[ ! -f $SHELLJSON ]]; then
     note "$id: no shell.json, so nothing to register it in"
