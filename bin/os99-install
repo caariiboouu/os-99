@@ -544,11 +544,24 @@ if $REMOVE; then
   # talks to it. Wait for it to answer before asking.
   os99_shell_ready 20 || note "omarchy-shell is not answering; removing anyway"
   if command -v omarchy >/dev/null 2>&1 && [[ -d $HOME/.config/omarchy/plugins/$PLUGIN_ID ]]; then
+    # Three attempts, and the DIRECTORY is the truth rather than the exit code.
+    #
+    # This step failed four times over two days and worked every time it was
+    # run by hand a moment later. `omarchy-shell shell ping` answering is not
+    # the same as the shell having settled: the theme switch above reloads its
+    # configuration and its plugins, and a removal issued into that window
+    # fails. Waiting for the ping was not enough, so this retries and then
+    # believes its eyes.
     rm_log="$(mktemp)"
-    if omarchy plugin remove "$PLUGIN_ID" --yes >"$rm_log" 2>&1; then
+    for _try in 1 2 3; do
+      omarchy plugin remove "$PLUGIN_ID" --yes >"$rm_log" 2>&1
+      [[ -d $HOME/.config/omarchy/plugins/$PLUGIN_ID ]] || break
+      sleep 3
+    done
+    if [[ ! -d $HOME/.config/omarchy/plugins/$PLUGIN_ID ]]; then
       good "plugin removed"
     else
-      bad "could not remove the plugin:"
+      bad "could not remove the plugin after three attempts:"
       tail -3 "$rm_log" | sed 's/^/      /'
       say "      omarchy plugin remove $PLUGIN_ID"
     fi
