@@ -41,7 +41,7 @@ source "$_os99_lib" || { echo "os99-install: missing $_os99_lib" >&2; exit 1; }
 
 # Bumped by hand, and checked against manifest.json by --selftest: a version
 # that only one of them knows is a version nobody can trust.
-OS99_VERSION="1.4.1"
+OS99_VERSION="1.4.2"
 
 CHECK=false
 AUTO=false

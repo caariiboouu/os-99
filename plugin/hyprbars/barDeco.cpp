@@ -382,12 +382,37 @@ void CHyprBar::handleContextDown(Event::SCallbackInfo& info) {
     // a config default cannot expand $HOME, and setting the key from bars.lua
     // would make older builds of this fork fail the whole eval on an unknown
     // key -- breaking theme application until the next login.
+    //
+    // TWO places the helper can be. A checkout install puts it in ~/.local/bin;
+    // a package puts it in /usr/bin and may never have touched $HOME at all.
+    // This used to name ~/.local/bin only, so on a packaged install a
+    // right-click silently did nothing -- no menu, no error, nothing to see.
+    //
+    // The NEWER of the two wins, which is the same rule os99-window-bars uses
+    // to choose between a hand-built plugin and a packaged one: right for
+    // somebody who has just installed the package, and right for somebody who
+    // has just rebuilt by hand.
     std::string cmd = g_pGlobalState->config.barMenuCommand->value();
     if (cmd.empty()) {
-        const char* home = getenv("HOME");
-        if (!home)
+        std::vector<std::string> candidates;
+        if (const char* home = getenv("HOME"))
+            candidates.push_back(std::string{home} + "/.local/bin/os99-bar-menu");
+        candidates.push_back("/usr/bin/os99-bar-menu");
+
+        struct stat best{};
+        bool        found = false;
+        for (const auto& c : candidates) {
+            struct stat st{};
+            if (::stat(c.c_str(), &st) != 0 || !(st.st_mode & S_IXUSR))
+                continue;
+            if (!found || st.st_mtime > best.st_mtime) {
+                best  = st;
+                cmd   = c;
+                found = true;
+            }
+        }
+        if (!found)
             return;
-        cmd = std::string{home} + "/.local/bin/os99-bar-menu";
     }
 
     Config::Supplementary::executor()->spawn(std::format("{} 0x{:x}", cmd, (uintptr_t)PWINDOW.get()));
