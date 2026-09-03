@@ -698,14 +698,6 @@ else
 
 fi
 
-# The two files everything downstream needs, checked HERE rather than in
-# Prerequisites -- the step above is what installs them, so asking first meant a
-# fresh machine always reported two failures it was about to fix, and a
-# perfectly good --auto ended with "3 missing".
-head_ "Config and generator"
-[[ -f $TOML ]] && good "config $TOML" || bad "config missing: $TOML"
-[[ -f $GEN  ]] && good "generator present" || bad "generator missing: $GEN"
-
 # The tuning file goes in whether or not this is a checkout, for the same reason
 # the hooks do: a packaged install has no $REPO to copy from, and without a
 # configuration every step after this one has nothing to read.
@@ -723,6 +715,14 @@ if ! $CHECK; then
     break
   done
 fi
+
+# The two files everything downstream needs, checked HERE rather than in
+# Prerequisites -- the step above is what installs them, so asking first meant a
+# fresh machine always reported two failures it was about to fix, and a
+# perfectly good --auto ended with "3 missing".
+head_ "Config and generator"
+[[ -f $TOML ]] && good "config $TOML" || bad "config missing: $TOML"
+[[ -f $GEN  ]] && good "generator present" || bad "generator missing: $GEN"
 
 # The hooks go in whether or not this is a checkout: a packaged install has no
 # $REPO to copy from, but it still needs the theme-set hook that loads the frame
